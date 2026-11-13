@@ -47,7 +47,11 @@ function api(b,cb){var m=E('msg');m.style.color='#00d9ff';m.textContent='Working
 fetch('/api/wgserver',{method:'POST',body:b}).then(function(r){return r.json();}).then(function(d){\
 m.style.color=d.ok?'#4caf50':'#ff5252';m.textContent=d.msg;if(d.ok&&cb)cb(d);\
 }).catch(function(){m.style.color='#ff5252';m.textContent='Request failed';});}\
-function show(d,n){if(d.conf){E('conf').textContent=d.conf;E('cn').value=n;E('out').style.display='block';}}\
+function qr(d){var c=E('qr');if(!d.qr){c.style.display='none';E('qh').style.display='none';return;}\
+var n=d.qrn,s=4,q=4,x=c.getContext('2d');c.width=c.height=(n+2*q)*s;x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.fillStyle='#000';\
+for(var i=0;i<n*n;i++){if(parseInt(d.qr[i>>2],16)&(8>>(i&3)))x.fillRect((q+i%n)*s,(q+(i/n|0))*s,s,s);}\
+c.style.display='block';E('qh').style.display='block';}\
+function show(d,n){if(d.conf){E('conf').textContent=d.conf;E('cn').value=n;E('out').style.display='block';qr(d);}}\
 function save(){api('action=settings&enabled='+v('en')+'&port='+v('po')+'&ip='+v('ip')+'&mask='+v('ma')+'&host='+v('ho'),\
 function(d){if(d.reboot)setTimeout(function(){location.href='/';},10000);});}\
 function add(){var n=E('pn').value.trim();api('action=add&name='+v('pn')+'&pubkey='+v('pk')+'&pip='+v('pi')+'&split='+v('pt'),function(d){show(d,n);});}\
@@ -71,6 +75,8 @@ function dl(){var a=document.createElement('a');a.href=URL.createObjectURL(new B
 <div id='out' style='display:none;'>\
 <h2>Client Config</h2>\
 <input type='hidden' id='cn' value='client'/>\
+<canvas id='qr' style='display:none; margin:0 auto 0.75rem auto; max-width:100%;'></canvas>\
+<small id='qh' style='display:none; text-align:center; margin-bottom:0.75rem;'>Scan with the WireGuard app (Add tunnel, Scan from QR code).</small>\
 <pre id='conf'></pre>\
 <button type='button' class='ok-button' onclick='dl()'>Download .conf</button>\
 <small style='margin-top:0.5rem;'>Import this file in the WireGuard app. Reload the page to refresh the client list.</small>\
