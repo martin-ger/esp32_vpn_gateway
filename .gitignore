@@ -14,3 +14,10 @@ dependencies.lock
 sdkconfig.old
 !sdkconfig.defaults
 !sdkconfig.defaults.*
+
+# Local notes and wiki working copy
+Diffs.md
+fix.md
+perf.txt
+reply.txt
+wiki/
