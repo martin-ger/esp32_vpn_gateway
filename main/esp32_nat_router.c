@@ -467,6 +467,9 @@ static void eth_event_handler(void* arg, esp_event_base_t event_base,
         if (vpn_enabled) {
             vpn_connect_task_start();
         }
+#if CONFIG_WG_SERVER
+        wgs_start();
+#endif
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
@@ -741,6 +744,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         if (vpn_enabled) {
             vpn_connect_task_start();
         }
+#if CONFIG_WG_SERVER
+        // Start the WireGuard server (no-op if disabled or already running)
+        wgs_start();
+#endif
 
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -1594,6 +1601,11 @@ void app_main(void)
                            ip_2_ip4(&mask)->addr);
         }
     }
+#if CONFIG_WG_SERVER
+    // Load WireGuard server settings and peers (started on uplink GOT_IP)
+    wgs_load_config();
+#endif
+
     // Pre-set MSS/PMTU when VPN is enabled (before WiFi connects)
     if (vpn_enabled) {
         ap_mss_clamp = (uint16_t)(vpn_mtu - 40);

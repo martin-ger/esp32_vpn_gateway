@@ -3,3 +3,6 @@
 # Use built-in USB_SERIAL_JTAG for console output
 CONFIG_ESP_CONSOLE_UART_DEFAULT=n
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# WireGuard server (inbound VPN); also raises WIREGUARD_MAX_PEERS to 8
+CONFIG_WG_SERVER=y

@@ -608,14 +608,16 @@ static char *nvs_export_to_json_robust(bool include_secrets)
          *   web_password — salt:hash of the web UI password. Exporting it put
          *                  the hash in a plaintext file anyone could take away
          *                  and grind offline.
-         *   mqtt_pass    — MQTT broker credential */
+         *   mqtt_pass    — MQTT broker credential
+         *   wgs_privkey  — WireGuard server private key */
         if (!include_secrets &&
             (strcmp(info.key, "passwd")       == 0 ||
              strcmp(info.key, "ap_passwd")    == 0 ||
              strcmp(info.key, "vpn_privkey")  == 0 ||
              strcmp(info.key, "vpn_psk")      == 0 ||
              strcmp(info.key, "web_password") == 0 ||
-             strcmp(info.key, "mqtt_pass")    == 0)) {
+             strcmp(info.key, "mqtt_pass")    == 0 ||
+             strcmp(info.key, "wgs_privkey")  == 0)) {
             err = nvs_entry_next(&it);
             continue;
         }

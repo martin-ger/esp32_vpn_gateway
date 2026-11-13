@@ -14,5 +14,6 @@
 #include "portmap.h"
 #include "wifi_config.h"
 #include "vpn_config.h"
+#include "wg_server.h"
 #include "acl.h"
 #include "web_password.h"

@@ -113,6 +113,9 @@ static void register_scan(void);
 static void register_set_sta_band(void);
 #endif
 static void register_set_vpn(void);
+#if CONFIG_WG_SERVER
+static void register_wg_server(void);
+#endif
 static void register_set_tz(void);
 
 /* ACL helper functions (forward declarations) */
@@ -184,7 +187,8 @@ void preprocess_string(char* str)
 static bool is_secret_param(const char *name)
 {
     static const char *const secrets[] = {
-        "passwd", "ap_passwd", "vpn_privkey", "vpn_psk", "web_password", "mqtt_pass"
+        "passwd", "ap_passwd", "vpn_privkey", "vpn_psk", "web_password", "mqtt_pass",
+        "wgs_privkey"
     };
     for (size_t i = 0; i < sizeof(secrets) / sizeof(secrets[0]); i++) {
         if (strcmp(name, secrets[i]) == 0) return true;
@@ -466,6 +470,9 @@ void register_router(void)
     register_syslog_cmd();
     register_set_tz();
     register_set_vpn();
+#if CONFIG_WG_SERVER
+    register_wg_server();
+#endif
 #if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S3)
     register_set_oled();
     register_set_oled_gpio();
@@ -3928,6 +3935,12 @@ static int set_vpn_cmd(int argc, char **argv)
             return 1;
         }
     }
+#if CONFIG_WG_SERVER
+    if (set_vpn_args.enable->count > 0 && set_vpn_args.enable->ival[0] && wgs_enabled) {
+        printf("The WireGuard server is enabled; run 'wg_server disable' first\n");
+        return 1;
+    }
+#endif
 
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &nvs);
@@ -4008,3 +4021,304 @@ static void register_set_vpn(void)
     };
     ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
 }
+
+#if CONFIG_WG_SERVER
+/* 'wg_server' command: WireGuard server (inbound VPN) settings and peers.
+ * Logic and storage live in main/wg_server.c. */
+
+static void wg_server_usage(void)
+{
+    printf("Usage:\n");
+    printf("  wg_server status                      - Show settings and peers\n");
+    printf("  wg_server enable|disable              - Turn the server on/off (restart to apply)\n");
+    printf("  wg_server port <port>                 - UDP listen port (restart to apply)\n");
+    printf("  wg_server subnet <ip> [netmask]       - Server tunnel address (restart to apply)\n");
+    printf("  wg_server host <name|ip>              - Public address written into client configs\n");
+    printf("  wg_server host -                      - Clear it (configs use the uplink address)\n");
+    printf("  wg_server genkey                      - New server key (restart; re-export all clients)\n");
+    printf("  wg_server peer add <name> [-k <pubkey>] [-i <ip>] [-s]\n");
+    printf("                                        - Add a client; without -k a key pair is\n");
+    printf("                                          generated and the config printed once.\n");
+    printf("                                          -s: split tunnel config instead of full\n");
+    printf("  wg_server peer del <name>             - Remove a client\n");
+    printf("  wg_server peer conf <name> [-s]       - Print the config without the private key\n");
+}
+
+static void wg_server_fmt_bytes(uint64_t v, char *buf, size_t len)
+{
+    if (v >= 1024ULL * 1024 * 1024) {
+        snprintf(buf, len, "%.1fG", (double)v / (1024.0 * 1024 * 1024));
+    } else if (v >= 1024 * 1024) {
+        snprintf(buf, len, "%.1fM", (double)v / (1024.0 * 1024));
+    } else if (v >= 1024) {
+        snprintf(buf, len, "%.1fK", (double)v / 1024.0);
+    } else {
+        snprintf(buf, len, "%uB", (unsigned)v);
+    }
+}
+
+static int wg_server_status(void)
+{
+    esp_ip4_addr_t ip = { .addr = wgs_ip };
+    esp_ip4_addr_t up = { .addr = my_ip };
+
+    printf("WireGuard server:\n");
+    printf("=================\n");
+    printf("Enabled: %s\n", wgs_enabled ? "yes" : "no");
+    printf("Running: %s\n", wgs_is_running() ? "yes" : "no");
+    if (wgs_enabled && vpn_enabled) {
+        printf("Blocked: the WireGuard client uplink is enabled\n");
+    }
+    printf("Listen Port: %ld\n", (long)wgs_port);
+    printf("Tunnel Address: " IPSTR "/%d\n", IP2STR(&ip), __builtin_popcount(wgs_mask));
+    printf("Public Key: %s\n", wgs_pubkey[0] ? wgs_pubkey : "<not set>");
+    if (wgs_host[0]) {
+        printf("Public Host: %s\n", wgs_host);
+    } else {
+        printf("Public Host: <not set> (configs use " IPSTR ")\n", IP2STR(&up));
+    }
+
+    wgs_peer_info_t *list = malloc(WGS_MAX_PEERS * sizeof(wgs_peer_info_t));
+    if (list == NULL) {
+        printf("Out of memory\n");
+        return 1;
+    }
+    int n = wgs_peer_list(list, WGS_MAX_PEERS);
+    printf("Peers: %d/%d\n", n, WGS_MAX_PEERS);
+    if (n > 0) {
+        printf("Name             Tunnel IP        State  Endpoint               Handshake  RX        TX\n");
+        printf("---------------  ---------------  -----  ---------------------  ---------  --------  --------\n");
+    }
+    for (int i = 0; i < n; i++) {
+        char tip[16], ep[24] = "-", hs[20] = "-", rx[12], tx[12];
+        esp_ip4_addr_t a = { .addr = list[i].cfg.ip };
+        esp_ip4addr_ntoa(&a, tip, sizeof(tip));
+        if (list[i].endpoint_ip != 0) {
+            esp_ip4_addr_t e = { .addr = list[i].endpoint_ip };
+            snprintf(ep, sizeof(ep), IPSTR ":%u", IP2STR(&e), (unsigned)list[i].endpoint_port);
+        }
+        if (list[i].handshake_age_s != UINT32_MAX) {
+            snprintf(hs, sizeof(hs), "%lus ago", (unsigned long)list[i].handshake_age_s);
+        }
+        wg_server_fmt_bytes(list[i].rx_bytes, rx, sizeof(rx));
+        wg_server_fmt_bytes(list[i].tx_bytes, tx, sizeof(tx));
+        printf("%-15s  %-15s  %-5s  %-21s  %-9s  %-8s  %-8s\n",
+               list[i].cfg.name, tip, list[i].up ? "up" : "down", ep, hs, rx, tx);
+    }
+    free(list);
+    return 0;
+}
+
+static void wg_server_print_conf(const wgs_peer_cfg_t *peer, const char *privkey, bool full_tunnel)
+{
+    char *conf = malloc(WGS_CLIENT_CONF_SIZE);
+
+    if (conf == NULL || wgs_client_config(peer, privkey, full_tunnel, conf, WGS_CLIENT_CONF_SIZE) < 0) {
+        printf("Could not build the client config\n");
+    } else {
+        printf("---- client config (%s tunnel) ----\n%s----\n", full_tunnel ? "full" : "split", conf);
+        memset(conf, 0, WGS_CLIENT_CONF_SIZE);
+    }
+    free(conf);
+    if (!wgs_host[0]) {
+        printf("Note: no public host set; the Endpoint only works inside the uplink network.\n");
+    }
+}
+
+static int wg_server_peer_cmd(int argc, char **argv)
+{
+    if (argc < 4) {
+        wg_server_usage();
+        return 1;
+    }
+    const char *action = argv[2];
+    const char *name = argv[3];
+    const char *pubkey = NULL;
+    uint32_t ip = 0;
+    bool full_tunnel = true;
+
+    for (int i = 4; i < argc; i++) {
+        if (strcmp(argv[i], "-s") == 0) {
+            full_tunnel = false;
+        } else if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
+            pubkey = argv[++i];
+        } else if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
+            ip4_addr_t a;
+            if (!ip4addr_aton(argv[++i], &a)) {
+                printf("Invalid IP address\n");
+                return 1;
+            }
+            ip = a.addr;
+        } else {
+            wg_server_usage();
+            return 1;
+        }
+    }
+
+    if (strcmp(action, "add") == 0) {
+        char priv[WGS_KEY_SIZE];
+        wgs_peer_cfg_t peer;
+        esp_err_t err = wgs_peer_add(name, pubkey, ip, priv, &peer);
+        switch (err) {
+        case ESP_OK:
+            break;
+        case ESP_ERR_INVALID_ARG:
+            printf("Invalid name (1-15 chars: letters, digits, '-', '_'), key, or address outside the tunnel subnet\n");
+            return 1;
+        case ESP_ERR_INVALID_STATE:
+            printf("Name, key or address already in use\n");
+            return 1;
+        case ESP_ERR_NO_MEM:
+            printf("Peer table full (%d) or no free address\n", WGS_MAX_PEERS);
+            return 1;
+        default:
+            printf("Failed to add peer: %s\n", esp_err_to_name(err));
+            return 1;
+        }
+        printf("Peer '%s' added%s.\n", peer.name, wgs_is_running() ? " and active" : "");
+        if (priv[0]) {
+            printf("The private key below is shown once and not stored on the router.\n");
+        }
+        wg_server_print_conf(&peer, priv, full_tunnel);
+        memset(priv, 0, sizeof(priv));
+        return 0;
+    }
+
+    if (strcmp(action, "del") == 0) {
+        esp_err_t err = wgs_peer_del(name);
+        if (err == ESP_ERR_NOT_FOUND) {
+            printf("No peer named '%s'\n", name);
+            return 1;
+        }
+        if (err != ESP_OK) {
+            printf("Peer disconnected, but saving failed: %s\n", esp_err_to_name(err));
+            return 1;
+        }
+        printf("Peer '%s' removed.\n", name);
+        return 0;
+    }
+
+    if (strcmp(action, "conf") == 0) {
+        wgs_peer_info_t *list = malloc(WGS_MAX_PEERS * sizeof(wgs_peer_info_t));
+        int rc = 1;
+        if (list == NULL) {
+            printf("Out of memory\n");
+            return 1;
+        }
+        int n = wgs_peer_list(list, WGS_MAX_PEERS);
+        for (int i = 0; i < n; i++) {
+            if (strcmp(list[i].cfg.name, name) == 0) {
+                wg_server_print_conf(&list[i].cfg, NULL, full_tunnel);
+                rc = 0;
+                break;
+            }
+        }
+        if (rc != 0) {
+            printf("No peer named '%s'\n", name);
+        }
+        free(list);
+        return rc;
+    }
+
+    wg_server_usage();
+    return 1;
+}
+
+static int wg_server_cmd(int argc, char **argv)
+{
+    if (argc < 2) {
+        wg_server_usage();
+        return 0;
+    }
+    const char *action = argv[1];
+    esp_err_t err;
+
+    if (strcmp(action, "status") == 0) {
+        return wg_server_status();
+    }
+    if (strcmp(action, "peer") == 0) {
+        return wg_server_peer_cmd(argc, argv);
+    }
+    if (strcmp(action, "enable") == 0) {
+        err = wgs_set_enabled(true);
+        if (err == ESP_ERR_INVALID_STATE) {
+            printf("The WireGuard client uplink is enabled; disable it first (set_vpn -e 0)\n");
+            return 1;
+        }
+        if (err != ESP_OK) {
+            printf("Failed: %s\n", esp_err_to_name(err));
+            return 1;
+        }
+        printf("WireGuard server enabled. Restart to apply.\n");
+        printf("Public Key: %s\n", wgs_pubkey);
+        return 0;
+    }
+    if (strcmp(action, "disable") == 0) {
+        err = wgs_set_enabled(false);
+        if (err != ESP_OK) {
+            printf("Failed: %s\n", esp_err_to_name(err));
+            return 1;
+        }
+        printf("WireGuard server disabled. Restart to apply.\n");
+        return 0;
+    }
+    if (strcmp(action, "genkey") == 0) {
+        err = wgs_regenerate_key();
+        if (err != ESP_OK) {
+            printf("Failed: %s\n", esp_err_to_name(err));
+            return 1;
+        }
+        printf("New server key saved. Restart to apply, then re-export every client config.\n");
+        printf("Public Key: %s\n", wgs_pubkey);
+        return 0;
+    }
+    if (strcmp(action, "port") == 0 && argc == 3) {
+        if (wgs_set_port(atoi(argv[2])) != ESP_OK) {
+            printf("Port must be 1-65535\n");
+            return 1;
+        }
+        printf("Listen port saved. Restart to apply.\n");
+        return 0;
+    }
+    if (strcmp(action, "host") == 0 && argc == 3) {
+        if (wgs_set_host(strcmp(argv[2], "-") == 0 ? "" : argv[2]) != ESP_OK) {
+            printf("Invalid host (max %d chars: letters, digits, '.', '-')\n", WGS_HOST_SIZE - 1);
+            return 1;
+        }
+        printf("Public host saved.\n");
+        return 0;
+    }
+    if (strcmp(action, "subnet") == 0 && (argc == 3 || argc == 4)) {
+        ip4_addr_t ip, mask;
+        if (!ip4addr_aton(argv[2], &ip) || !ip4addr_aton(argc == 4 ? argv[3] : WGS_MASK_DEFAULT, &mask)) {
+            printf("Invalid address or netmask\n");
+            return 1;
+        }
+        err = wgs_set_subnet(ip.addr, mask.addr);
+        if (err == ESP_ERR_INVALID_STATE) {
+            printf("Remove all peers before changing the tunnel subnet\n");
+            return 1;
+        }
+        if (err != ESP_OK) {
+            printf("Invalid subnet: need a host address, a /16 to /30 netmask, and no overlap with the AP network\n");
+            return 1;
+        }
+        printf("Tunnel address saved. Restart to apply.\n");
+        return 0;
+    }
+
+    wg_server_usage();
+    return 1;
+}
+
+static void register_wg_server(void)
+{
+    const esp_console_cmd_t cmd = {
+        .command = "wg_server",
+        .help = "WireGuard server: settings and client peers ('wg_server' for usage)",
+        .hint = NULL,
+        .func = &wg_server_cmd,
+    };
+    ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
+}
+#endif /* CONFIG_WG_SERVER */
