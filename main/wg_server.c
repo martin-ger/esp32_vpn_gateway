@@ -25,6 +25,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include "nvs.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/lwip_napt.h"
@@ -150,14 +151,29 @@ static void derive_pubkey(void)
     mbedtls_platform_zeroize(priv, sizeof(priv));
 }
 
-static bool valid_pubkey(const char *key)
+/* A base64 string that decodes to 32 bytes: public or preshared key */
+static bool valid_key(const char *key)
 {
     unsigned char raw[33];
     size_t len = 0;
 
-    return key && strlen(key) == WGS_KEY_SIZE - 1 &&
-           mbedtls_base64_decode(raw, sizeof(raw), &len, (const unsigned char *)key, WGS_KEY_SIZE - 1) == 0 &&
-           len == 32;
+    bool ok = key && strlen(key) == WGS_KEY_SIZE - 1 &&
+              mbedtls_base64_decode(raw, sizeof(raw), &len, (const unsigned char *)key, WGS_KEY_SIZE - 1) == 0 &&
+              len == 32;
+    mbedtls_platform_zeroize(raw, sizeof(raw));
+    return ok;
+}
+
+/* Like 'wg genpsk': 32 random bytes, base64 */
+static esp_err_t generate_psk(char *out)
+{
+    uint8_t raw[32];
+    size_t len = 0;
+
+    esp_fill_random(raw, sizeof(raw));
+    int rc = mbedtls_base64_encode((unsigned char *)out, WGS_KEY_SIZE, &len, raw, sizeof(raw));
+    mbedtls_platform_zeroize(raw, sizeof(raw));
+    return (rc == 0 && len == WGS_KEY_SIZE - 1) ? ESP_OK : ESP_FAIL;
 }
 
 static bool valid_name(const char *name)
@@ -219,6 +235,10 @@ static void load_peers(void)
             for (int i = 0; i < peer_count; i++) {
                 peers[i].name[WGS_NAME_SIZE - 1] = '\0';
                 peers[i].pubkey[WGS_KEY_SIZE - 1] = '\0';
+                peers[i].psk[WGS_KEY_SIZE - 1] = '\0';
+                if (peers[i].psk[0] && !valid_key(peers[i].psk)) {
+                    memset(peers[i].psk, 0, WGS_KEY_SIZE);
+                }
             }
             /* Timestamps are only trusted if they match the peer table */
             size_t ts_len = (size_t)peer_count * TS_LEN;
@@ -281,7 +301,7 @@ static esp_err_t live_add(int i)
 {
     esp_wireguard_server_peer_t peer = {
         .public_key = peers[i].pubkey,
-        .preshared_key = NULL,
+        .preshared_key = peers[i].psk[0] ? peers[i].psk : NULL,
         .allowed_ip = peers[i].ip,
         .keepalive = 0,
         .greatest_timestamp = peer_ts[i],
@@ -540,7 +560,7 @@ esp_err_t wgs_set_host(const char *host)
 
 /* ---- peers ---- */
 
-esp_err_t wgs_peer_add(const char *name, const char *pubkey, uint32_t ip,
+esp_err_t wgs_peer_add(const char *name, const char *pubkey, const char *psk, uint32_t ip,
                        char *privkey_out, wgs_peer_cfg_t *out)
 {
     wgs_peer_cfg_t p = {0};
@@ -550,16 +570,26 @@ esp_err_t wgs_peer_add(const char *name, const char *pubkey, uint32_t ip,
     if (privkey_out) {
         privkey_out[0] = '\0';
     }
-    if (lock == NULL || !valid_name(name) || (pubkey != NULL && !valid_pubkey(pubkey))) {
+    if (lock == NULL || !valid_name(name) || (pubkey != NULL && !valid_key(pubkey)) ||
+        (psk != NULL && psk[0] != '\0' && !valid_key(psk))) {
         return ESP_ERR_INVALID_ARG;
     }
     strlcpy(p.name, name, sizeof(p.name));
+
+    if (psk != NULL) {
+        if (psk[0] != '\0') {
+            strlcpy(p.psk, psk, sizeof(p.psk));
+        } else if (generate_psk(p.psk) != ESP_OK) {
+            return ESP_FAIL;
+        }
+    }
 
     if (pubkey != NULL) {
         strlcpy(p.pubkey, pubkey, sizeof(p.pubkey));
     } else {
         /* One X25519 in the calling task, before taking the lock */
         if (privkey_out == NULL) {
+            mbedtls_platform_zeroize(&p, sizeof(p));
             return ESP_ERR_INVALID_ARG;
         }
         err = esp_wireguard_generate_private_key(priv, sizeof(priv));
@@ -568,6 +598,7 @@ esp_err_t wgs_peer_add(const char *name, const char *pubkey, uint32_t ip,
         }
         if (err != ESP_OK) {
             mbedtls_platform_zeroize(priv, sizeof(priv));
+            mbedtls_platform_zeroize(&p, sizeof(p));
             return err;
         }
     }
@@ -614,6 +645,9 @@ esp_err_t wgs_peer_add(const char *name, const char *pubkey, uint32_t ip,
     } else if (err != ESP_OK) {
         peer_count--;
     }
+    if (err != ESP_OK) {
+        mbedtls_platform_zeroize(&peers[peer_count], sizeof(wgs_peer_cfg_t));
+    }
 
 done:
     xSemaphoreGive(lock);
@@ -626,6 +660,7 @@ done:
         }
     }
     mbedtls_platform_zeroize(priv, sizeof(priv));
+    mbedtls_platform_zeroize(&p, sizeof(p));
     return err;
 }
 
@@ -648,7 +683,7 @@ esp_err_t wgs_peer_del(const char *name)
         memmove(&peers[i], &peers[i + 1], (size_t)(peer_count - i - 1) * sizeof(wgs_peer_cfg_t));
         memmove(peer_ts[i], peer_ts[i + 1], (size_t)(peer_count - i - 1) * TS_LEN);
         peer_count--;
-        memset(&peers[peer_count], 0, sizeof(wgs_peer_cfg_t));
+        mbedtls_platform_zeroize(&peers[peer_count], sizeof(wgs_peer_cfg_t));
         memset(peer_ts[peer_count], 0, TS_LEN);
         err = save_peers();
     }
@@ -687,6 +722,24 @@ int wgs_peer_list(wgs_peer_info_t *out, int max)
     return n;
 }
 
+int wgs_connected_count(void)
+{
+    int up = 0;
+
+    if (lock == NULL || !esp_wireguard_server_is_running()) {
+        return 0;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    for (int i = 0; i < peer_count; i++) {
+        esp_wireguard_server_peer_stats_t st;
+        if (esp_wireguard_server_get_peer_stats(peers[i].pubkey, &st) == ESP_OK && st.up) {
+            up++;
+        }
+    }
+    xSemaphoreGive(lock);
+    return up;
+}
+
 int wgs_client_config(const wgs_peer_cfg_t *peer, const char *privkey,
                       bool full_tunnel, char *buf, size_t len)
 {
@@ -710,8 +763,15 @@ int wgs_client_config(const wgs_peer_cfg_t *peer, const char *privkey,
         return -1;
     }
 
-    n += snprintf(buf + n, len - n, "\n[Peer]\nPublicKey = %s\nEndpoint = %s:%d\nAllowedIPs = ",
-                  wgs_pubkey, wgs_host[0] ? wgs_host : ip4str(my_ip, a), (int)wgs_port);
+    n += snprintf(buf + n, len - n, "\n[Peer]\nPublicKey = %s\n", wgs_pubkey);
+    if (peer->psk[0] && (size_t)n < len) {
+        n += snprintf(buf + n, len - n, "PresharedKey = %s\n", peer->psk);
+    }
+    if ((size_t)n >= len) {
+        return -1;
+    }
+    n += snprintf(buf + n, len - n, "Endpoint = %s:%d\nAllowedIPs = ",
+                  wgs_host[0] ? wgs_host : ip4str(my_ip, a), (int)wgs_port);
     if ((size_t)n >= len) {
         return -1;
     }

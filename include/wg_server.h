@@ -30,11 +30,13 @@ extern "C" {
 #define WGS_CLIENT_CONF_SIZE 512   /* enough for wgs_client_config() output */
 
 /* Stored peer record. The array of these is the NVS blob "wgs_peers", so the
- * layout must not change without a migration. */
+ * layout must not change without a migration. It holds the preshared keys
+ * and is therefore treated as a secret (left out of plain-text exports). */
 typedef struct {
     char     name[WGS_NAME_SIZE];
     char     pubkey[WGS_KEY_SIZE];
-    uint8_t  reserved[3];
+    char     psk[WGS_KEY_SIZE];     /* preshared key (base64), "" if none */
+    uint8_t  reserved[2];
     uint32_t ip;                    /* tunnel address, network byte order */
 } wgs_peer_cfg_t;
 
@@ -79,12 +81,15 @@ esp_err_t wgs_regenerate_key(void);                 /* invalidates every exporte
 
 /* Add a peer; applied to the running server immediately.
  *   pubkey       NULL to generate a key pair on the device
+ *   psk          preshared key: NULL for none, "" to generate one, else the
+ *                base64 key to use. It is stored with the peer and written
+ *                into every client config of this peer.
  *   ip           0 to assign the next free tunnel address
  *   privkey_out  WGS_KEY_SIZE bytes; receives the generated private key, or ""
  *                when pubkey was given. It is not stored anywhere.
  * Returns ESP_ERR_INVALID_ARG (bad name/key/address), ESP_ERR_INVALID_STATE
  * (name, key or address already in use), ESP_ERR_NO_MEM (table full). */
-esp_err_t wgs_peer_add(const char *name, const char *pubkey, uint32_t ip,
+esp_err_t wgs_peer_add(const char *name, const char *pubkey, const char *psk, uint32_t ip,
                        char *privkey_out, wgs_peer_cfg_t *out);
 
 esp_err_t wgs_peer_del(const char *name);
@@ -92,8 +97,12 @@ esp_err_t wgs_peer_del(const char *name);
 /* Copy up to max peers with their live state; returns the number copied. */
 int wgs_peer_list(wgs_peer_info_t *out, int max);
 
+/* Number of peers with a live session; 0 if the server is not running. */
+int wgs_connected_count(void);
+
 /* Write a client configuration for the peer into buf. privkey may be NULL or
- * "" (a placeholder is written). Returns the length, or -1 if it did not fit. */
+ * "" (a placeholder is written). The peer's preshared key, if it has one, is
+ * included. Returns the length, or -1 if it did not fit. */
 int wgs_client_config(const wgs_peer_cfg_t *peer, const char *privkey,
                       bool full_tunnel, char *buf, size_t len);
 

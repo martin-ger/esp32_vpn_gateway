@@ -54,7 +54,7 @@ c.style.display='block';E('qh').style.display='block';}\
 function show(d,n){if(d.conf){E('conf').textContent=d.conf;E('cn').value=n;E('out').style.display='block';qr(d);}}\
 function save(){api('action=settings&enabled='+v('en')+'&port='+v('po')+'&ip='+v('ip')+'&mask='+v('ma')+'&host='+v('ho'),\
 function(d){if(d.reboot)setTimeout(function(){location.href='/';},10000);});}\
-function add(){var n=E('pn').value.trim();api('action=add&name='+v('pn')+'&pubkey='+v('pk')+'&pip='+v('pi')+'&split='+v('pt'),function(d){show(d,n);});}\
+function add(){var n=E('pn').value.trim();api('action=add&name='+v('pn')+'&pubkey='+v('pk')+'&pip='+v('pi')+'&split='+v('pt')+'&psk='+(v('pg')==2?v('ps'):v('pg')==1?'1':''),function(d){show(d,n);});}\
 function pc(n){api('action=conf&name='+n+'&split='+v('pt'),function(d){show(d,n);});}\
 function pd(n){if(confirm('Remove peer '+n+'?'))api('action=del&name='+n,function(){location.reload();});}\
 function dl(){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([E('conf').textContent],{type:'text/plain'}));a.download=E('cn').value+'.conf';a.click();}\
@@ -67,6 +67,9 @@ function dl(){var a=document.createElement('a');a.href=URL.createObjectURL(new B
 <tr><td>Public Key</td><td><input type='text' id='pk' maxlength='44' placeholder='Optional'/>\
 <small>Leave empty to generate a key pair on the router. The private key is then shown once and not stored.</small></td></tr>\
 <tr><td>Tunnel IP</td><td><input type='text' id='pi' placeholder='Optional, next free address'/></td></tr>\
+<tr><td>Preshared Key</td><td><select id='pg' onchange=\"E('ps').style.display=this.value==2?'block':'none'\"><option value='0'>None</option><option value='1'>Generate</option><option value='2'>Enter key</option></select>\
+<input type='text' id='ps' maxlength='44' placeholder='Base64 key (wg genpsk)' style='display:none; margin-top:0.4rem;'/>\
+<small>Optional extra secret per client. It is stored on the router and included in the client config.</small></td></tr>\
 <tr><td>Client Routes</td><td><select id='pt'><option value='0'>Full tunnel (all traffic)</option><option value='1'>Split tunnel (router networks only)</option></select>\
 <small>Also used by the Config buttons above.</small></td></tr>\
 <tr><td></td><td><button type='button' class='ok-button' onclick='add()'>Add Client</button></td></tr>\

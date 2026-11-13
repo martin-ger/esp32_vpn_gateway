@@ -615,7 +615,10 @@ static char *nvs_export_to_json_robust(bool include_secrets)
          *                  the hash in a plaintext file anyone could take away
          *                  and grind offline.
          *   mqtt_pass    — MQTT broker credential
-         *   wgs_privkey  — WireGuard server private key */
+         *   wgs_privkey  — WireGuard server private key
+         *   wgs_peers    — WireGuard server peer table: holds the clients'
+         *                  preshared keys, and is of little use without the
+         *                  server key anyway */
         if (!include_secrets &&
             (strcmp(info.key, "passwd")       == 0 ||
              strcmp(info.key, "ap_passwd")    == 0 ||
@@ -623,7 +626,8 @@ static char *nvs_export_to_json_robust(bool include_secrets)
              strcmp(info.key, "vpn_psk")      == 0 ||
              strcmp(info.key, "web_password") == 0 ||
              strcmp(info.key, "mqtt_pass")    == 0 ||
-             strcmp(info.key, "wgs_privkey")  == 0)) {
+             strcmp(info.key, "wgs_privkey")  == 0 ||
+             strcmp(info.key, "wgs_peers")    == 0)) {
             err = nvs_entry_next(&it);
             continue;
         }
@@ -1412,6 +1416,22 @@ static esp_err_t index_get_handler(httpd_req_t *req)
         }
         SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
     }
+
+#if CONFIG_WG_SERVER
+    /* Stream WireGuard server status row */
+    if (wgs_enabled) {
+        if (wgs_is_running()) {
+            int up = wgs_connected_count();
+            snprintf(row, sizeof(row), "<tr><td>VPN Server:</td><td><span style='color: #4caf50;'>Running</span> (%d client%s)</td></tr>",
+                     up, up == 1 ? "" : "s");
+        } else if (vpn_enabled) {
+            snprintf(row, sizeof(row), "<tr><td>VPN Server:</td><td><span style='color: #f44336;'>Blocked by VPN client</span></td></tr>");
+        } else {
+            snprintf(row, sizeof(row), "<tr><td>VPN Server:</td><td><span style='color: #ffc107;'>Waiting for uplink</span></td></tr>");
+        }
+        SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+    }
+#endif
 
     /* Stream Bytes row (sent/received combined) */
     uint64_t bytes_sent = get_sta_bytes_sent();
@@ -3896,7 +3916,7 @@ static esp_err_t wgserver_get_handler(httpd_req_t *req)
     int n = wgs_peer_list(list, WGS_MAX_PEERS);
     snprintf(row, sizeof(row),
         "<h2>Clients (%d/%d)</h2><table class='p'>"
-        "<tr><th>Name</th><th>Tunnel IP</th><th>State</th><th>Endpoint</th><th>Handshake</th><th>RX / TX</th><th></th></tr>",
+        "<tr><th>Name</th><th>Tunnel IP</th><th>State</th><th>Endpoint</th><th>Handshake</th><th>RX / TX</th><th>PSK</th><th></th></tr>",
         n, WGS_MAX_PEERS);
     SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
     for (int i = 0; i < n; i++) {
@@ -3914,15 +3934,15 @@ static esp_err_t wgserver_get_handler(httpd_req_t *req)
         wgs_fmt_bytes(list[i].tx_bytes, tx, sizeof(tx));
         /* Names are restricted to letters, digits, '-', '_' when stored */
         snprintf(row, sizeof(row),
-            "<tr><td>%.15s</td><td>%s</td><td style='color:%s;'>%s</td><td>%s</td><td>%s</td><td>%s / %s</td>"
+            "<tr><td>%.15s</td><td>%s</td><td style='color:%s;'>%s</td><td>%s</td><td>%s</td><td>%s / %s</td><td>%s</td>"
             "<td><button class='sb' onclick='pc(\"%.15s\")'>Config</button>"
             "<button class='sb d' onclick='pd(\"%.15s\")'>Delete</button></td></tr>",
             list[i].cfg.name, tip, list[i].up ? "#4caf50" : "#888", list[i].up ? "up" : "down",
-            ep, hs, rx, tx, list[i].cfg.name, list[i].cfg.name);
+            ep, hs, rx, tx, list[i].cfg.psk[0] ? "yes" : "no", list[i].cfg.name, list[i].cfg.name);
         SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
     }
     if (n == 0) {
-        SEND_CHUNK(req, "<tr><td colspan='7' style='color:#888;'>No clients yet</td></tr>", HTTPD_RESP_USE_STRLEN);
+        SEND_CHUNK(req, "<tr><td colspan='8' style='color:#888;'>No clients yet</td></tr>", HTTPD_RESP_USE_STRLEN);
     }
     SEND_CHUNK(req, "</table>", HTTPD_RESP_USE_STRLEN);
 
@@ -3981,7 +4001,7 @@ static esp_err_t wgs_reply(httpd_req_t *req, bool ok, const char *msg, bool rebo
     out[n] = '\0';
 
     httpd_resp_set_type(req, "application/json");
-    /* The reply may carry a client private key */
+    /* The reply may carry a client private key or preshared key */
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     esp_err_t err = httpd_resp_send(req, out, n);
     memset(out, 0, cap);
@@ -4100,11 +4120,18 @@ static esp_err_t wgserver_api_handler(httpd_req_t *req)
         ip4_addr_t ip = { .addr = 0 };
         bool have_key = wgs_field(body, "pubkey", val, sizeof(val)) && val[0];
         char ipstr[20];
+        /* psk: empty = none, "1" = generate, otherwise the key to use */
+        char pskbuf[64];
+        const char *psk = NULL;
+        if (wgs_field(body, "psk", pskbuf, sizeof(pskbuf)) && pskbuf[0]) {
+            psk = strcmp(pskbuf, "1") == 0 ? "" : pskbuf;
+        }
 
         if (wgs_field(body, "pip", ipstr, sizeof(ipstr)) && ipstr[0] && !ip4addr_aton(ipstr, &ip)) {
             return wgs_reply(req, false, "Invalid tunnel IP", false, NULL, false);
         }
-        esp_err_t err = wgs_peer_add(name, have_key ? val : NULL, ip.addr, priv, &peer);
+        esp_err_t err = wgs_peer_add(name, have_key ? val : NULL, psk, ip.addr, priv, &peer);
+        memset(pskbuf, 0, sizeof(pskbuf));
         switch (err) {
         case ESP_OK:
             break;

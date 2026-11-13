@@ -181,22 +181,28 @@ font-size: 0.8rem;\
 </table>\
 </div>"
 
-/* Link to the WireGuard server page (S3 / WT32-ETH01 builds) */
+/* WireGuard server builds (S3 / WT32-ETH01): link to the server page, the
+ * client page is named "VPN Client", and the WiFi Scan button is dropped to
+ * keep the button row short (the scan stays reachable from Getting Started). */
 #if CONFIG_WG_SERVER
 #define INDEX_WGS_BUTTON "<a href='/wgserver' class='nav-button'>🔐 VPN Server</a>"
+#define INDEX_VPN_BUTTON "<a href='/vpn' class='nav-button'>🔒 VPN Client</a>"
+#define INDEX_SCAN_BUTTON ""
 #else
 #define INDEX_WGS_BUTTON ""
+#define INDEX_VPN_BUTTON "<a href='/vpn' class='nav-button'>🔒 VPN</a>"
+#define INDEX_SCAN_BUTTON "<a href='/scan' class='nav-button'>📡 WiFi Scan</a>"
 #endif
 
 #if !CONFIG_ETH_UPLINK
 #define INDEX_CHUNK_BUTTONS "\
 <div class='button-container'>\
 <a href='/setup' class='nav-button'>🚀 Getting Started</a>\
-<a href='/scan' class='nav-button'>📡 WiFi Scan</a>\
+" INDEX_SCAN_BUTTON "\
 <a href='/config' class='nav-button'>⚙️ Configuration</a>\
 <a href='/mappings' class='nav-button'>🔀 Mappings</a>\
 <a href='/firewall' class='nav-button'>🛡️ Firewall</a>\
-<a href='/vpn' class='nav-button'>🔒 VPN</a>" INDEX_WGS_BUTTON "\
+" INDEX_VPN_BUTTON INDEX_WGS_BUTTON "\
 </div>"
 #else
 #define INDEX_CHUNK_BUTTONS "\
@@ -204,7 +210,7 @@ font-size: 0.8rem;\
 <a href='/config' class='nav-button'>⚙️ Configuration</a>\
 <a href='/mappings' class='nav-button'>🔀 Mappings</a>\
 <a href='/firewall' class='nav-button'>🛡️ Firewall</a>\
-<a href='/vpn' class='nav-button'>🔒 VPN</a>" INDEX_WGS_BUTTON "\
+" INDEX_VPN_BUTTON INDEX_WGS_BUTTON "\
 </div>"
 #endif
 /* Auth UI streamed here */

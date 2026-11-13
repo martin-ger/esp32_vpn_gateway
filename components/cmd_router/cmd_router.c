@@ -188,7 +188,7 @@ static bool is_secret_param(const char *name)
 {
     static const char *const secrets[] = {
         "passwd", "ap_passwd", "vpn_privkey", "vpn_psk", "web_password", "mqtt_pass",
-        "wgs_privkey"
+        "wgs_privkey", "wgs_peers"
     };
     for (size_t i = 0; i < sizeof(secrets) / sizeof(secrets[0]); i++) {
         if (strcmp(name, secrets[i]) == 0) return true;
@@ -4042,10 +4042,12 @@ static void wg_server_usage(void)
     printf("  wg_server host <name|ip>              - Public address written into client configs\n");
     printf("  wg_server host -                      - Clear it (configs use the uplink address)\n");
     printf("  wg_server genkey                      - New server key (restart; re-export all clients)\n");
-    printf("  wg_server peer add <name> [-k <pubkey>] [-i <ip>] [-s]\n");
+    printf("  wg_server peer add <name> [-k <pubkey>] [-i <ip>] [-s] [-p | -P <psk>]\n");
     printf("                                        - Add a client; without -k a key pair is\n");
     printf("                                          generated and the config printed once.\n");
     printf("                                          -s: split tunnel config instead of full\n");
+    printf("                                          -p: generate a preshared key\n");
+    printf("                                          -P: use this preshared key (base64)\n");
     printf("  wg_server peer del <name>             - Remove a client\n");
     printf("  wg_server peer conf <name> [-s]       - Print the config without the private key\n");
 }
@@ -4092,8 +4094,8 @@ static int wg_server_status(void)
     int n = wgs_peer_list(list, WGS_MAX_PEERS);
     printf("Peers: %d/%d\n", n, WGS_MAX_PEERS);
     if (n > 0) {
-        printf("Name             Tunnel IP        State  Endpoint               Handshake  RX        TX\n");
-        printf("---------------  ---------------  -----  ---------------------  ---------  --------  --------\n");
+        printf("Name             Tunnel IP        State  Endpoint               Handshake  RX        TX        PSK\n");
+        printf("---------------  ---------------  -----  ---------------------  ---------  --------  --------  ---\n");
     }
     for (int i = 0; i < n; i++) {
         char tip[16], ep[24] = "-", hs[20] = "-", rx[12], tx[12];
@@ -4108,8 +4110,9 @@ static int wg_server_status(void)
         }
         wg_server_fmt_bytes(list[i].rx_bytes, rx, sizeof(rx));
         wg_server_fmt_bytes(list[i].tx_bytes, tx, sizeof(tx));
-        printf("%-15s  %-15s  %-5s  %-21s  %-9s  %-8s  %-8s\n",
-               list[i].cfg.name, tip, list[i].up ? "up" : "down", ep, hs, rx, tx);
+        printf("%-15s  %-15s  %-5s  %-21s  %-9s  %-8s  %-8s  %s\n",
+               list[i].cfg.name, tip, list[i].up ? "up" : "down", ep, hs, rx, tx,
+               list[i].cfg.psk[0] ? "yes" : "no");
     }
     free(list);
     return 0;
@@ -4122,7 +4125,17 @@ static void wg_server_print_conf(const wgs_peer_cfg_t *peer, const char *privkey
     if (conf == NULL || wgs_client_config(peer, privkey, full_tunnel, conf, WGS_CLIENT_CONF_SIZE) < 0) {
         printf("Could not build the client config\n");
     } else {
-        printf("---- client config (%s tunnel) ----\n%s----\n", full_tunnel ? "full" : "split", conf);
+        /* One printf per line: console output is cut off at about 255
+         * characters per call, which would drop the end of the config. */
+        printf("---- client config (%s tunnel) ----\n", full_tunnel ? "full" : "split");
+        for (char *line = conf; *line; ) {
+            char *nl = strchr(line, '\n');
+            if (nl) *nl = '\0';
+            printf("%s\n", line);
+            if (!nl) break;
+            line = nl + 1;
+        }
+        printf("----\n");
         memset(conf, 0, WGS_CLIENT_CONF_SIZE);
     }
     free(conf);
@@ -4140,12 +4153,21 @@ static int wg_server_peer_cmd(int argc, char **argv)
     const char *action = argv[2];
     const char *name = argv[3];
     const char *pubkey = NULL;
+    const char *psk = NULL;     /* NULL: none, "": generate */
     uint32_t ip = 0;
     bool full_tunnel = true;
 
     for (int i = 4; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0) {
             full_tunnel = false;
+        } else if (strcmp(argv[i], "-p") == 0) {
+            psk = "";
+        } else if (strcmp(argv[i], "-P") == 0 && i + 1 < argc) {
+            psk = argv[++i];
+            if (psk[0] == '\0') {
+                printf("Invalid preshared key\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
             pubkey = argv[++i];
         } else if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
@@ -4164,7 +4186,7 @@ static int wg_server_peer_cmd(int argc, char **argv)
     if (strcmp(action, "add") == 0) {
         char priv[WGS_KEY_SIZE];
         wgs_peer_cfg_t peer;
-        esp_err_t err = wgs_peer_add(name, pubkey, ip, priv, &peer);
+        esp_err_t err = wgs_peer_add(name, pubkey, psk, ip, priv, &peer);
         switch (err) {
         case ESP_OK:
             break;
