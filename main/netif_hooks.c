@@ -19,6 +19,7 @@
 #include "lwip/prot/ip4.h"
 #include "lwip/inet_chksum.h"
 #include "acl.h"
+#include "wg_server.h"
 #include "client_stats.h"
 #include "pcap_capture.h"
 #include "router_config.h"
@@ -375,31 +376,32 @@ void format_boot_time(char *buf, size_t buf_len) {
 }
 
 // Clamp the TCP MSS option in a SYN packet to max_mss.
-// Operates on raw Ethernet frames (14-byte header + IPv4 + TCP).
-// Updates the TCP checksum incrementally (RFC 1624).
-static void clamp_tcp_mss(struct pbuf *p, uint16_t max_mss) {
+// l2 is the length of the link-layer header in front of the IPv4 header: 14 for
+// the raw Ethernet frames the WiFi/ETH hooks see, 0 for the bare IP packets of
+// the WireGuard tunnel. Updates the TCP checksum incrementally (RFC 1624).
+static void clamp_tcp_mss_l2(struct pbuf *p, uint16_t max_mss, uint16_t l2) {
     if (max_mss == 0 || p == NULL) return;
-    // Need at least Ethernet(14) + min IP(20) + min TCP(20) in the first segment
-    if (p->len < 14 + 20 + 20) return;
+    // Need at least link header + min IP(20) + min TCP(20) in the first segment
+    if (p->len < l2 + 20 + 20) return;
 
     uint8_t *payload = (uint8_t *)p->payload;
 
     // IPv4 only (ethertype 0x0800)
-    if (payload[12] != 0x08 || payload[13] != 0x00) return;
+    if (l2 == 14 && (payload[12] != 0x08 || payload[13] != 0x00)) return;
 
-    struct ip_hdr *iphdr = (struct ip_hdr *)(payload + 14);
+    struct ip_hdr *iphdr = (struct ip_hdr *)(payload + l2);
     if (IPH_V(iphdr) != 4 || IPH_PROTO(iphdr) != PROTO_TCP) return;
 
     uint16_t ip_hdr_len = IPH_HL(iphdr) * 4;
-    if (p->len < 14 + ip_hdr_len + 20) return;
+    if (p->len < l2 + ip_hdr_len + 20) return;
 
-    uint8_t *tcphdr = payload + 14 + ip_hdr_len;
+    uint8_t *tcphdr = payload + l2 + ip_hdr_len;
 
     // SYN flag must be set (TCP flags byte is at offset 13, SYN = bit 1)
     if (!(tcphdr[13] & 0x02)) return;
 
     uint8_t tcp_hdr_len = (tcphdr[12] >> 4) * 4;
-    if (tcp_hdr_len < 20 || p->len < 14 + ip_hdr_len + tcp_hdr_len) return;
+    if (tcp_hdr_len < 20 || p->len < l2 + ip_hdr_len + tcp_hdr_len) return;
 
     // Scan TCP options for MSS option (kind=2, len=4)
     uint8_t *opt = tcphdr + 20;
@@ -429,6 +431,10 @@ static void clamp_tcp_mss(struct pbuf *p, uint16_t max_mss) {
         }
         opt += opt_len;
     }
+}
+
+static inline void clamp_tcp_mss(struct pbuf *p, uint16_t max_mss) {
+    clamp_tcp_mss_l2(p, max_mss, 14);
 }
 
 // Send ICMP Fragmentation Needed (Type 3, Code 4) back to a client on the AP interface.
@@ -670,3 +676,49 @@ void init_ap_netif_hooks(void) {
         }
     }
 }
+
+#if CONFIG_WG_SERVER
+/* WireGuard server tunnel hooks.
+ *
+ * The tunnel netif has no link layer: input and output carry bare IP packets,
+ * so it gets its own pair of hooks instead of the Ethernet-frame ones above.
+ * They apply the to_wg/from_wg ACLs and clamp the MSS of TCP SYNs to the
+ * tunnel MTU in both directions (hosts behind the router assume 1500).
+ * The ACL monitor flag has no effect here: tunnel traffic is not captured. */
+static netif_input_fn original_wg_input = NULL;
+static netif_output_fn original_wg_output = NULL;
+static uint16_t wg_mss_clamp = 0;
+
+static IRAM_ATTR bool wg_acl_denies(uint8_t list, struct pbuf *p) {
+    if (acl_is_empty(list)) return false;
+    uint8_t result = acl_check_ip_packet(list, p);
+    return result != ACL_NO_MATCH && (result & 0x01) == ACL_DENY;
+}
+
+static IRAM_ATTR err_t wg_input_hook(struct pbuf *p, struct netif *netif) {
+    if (wg_acl_denies(ACL_TO_WG, p)) {
+        pbuf_free(p);
+        return ERR_OK;
+    }
+    clamp_tcp_mss_l2(p, wg_mss_clamp, 0);
+    return original_wg_input(p, netif);
+}
+
+static IRAM_ATTR err_t wg_output_hook(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr) {
+    if (wg_acl_denies(ACL_FROM_WG, p)) {
+        return ERR_OK;  // dropped; the caller keeps ownership of p
+    }
+    clamp_tcp_mss_l2(p, wg_mss_clamp, 0);
+    return original_wg_output(netif, p, ipaddr);
+}
+
+// Must run on the tcpip thread, after the server created its netif.
+void wg_netif_hooks_install(struct netif *wg) {
+    if (wg == NULL || wg->input == wg_input_hook) return;
+    original_wg_input = wg->input;
+    original_wg_output = wg->output;
+    wg_mss_clamp = (uint16_t)(wg->mtu - 40);
+    wg->input = wg_input_hook;
+    wg->output = wg_output_hook;
+}
+#endif /* CONFIG_WG_SERVER */

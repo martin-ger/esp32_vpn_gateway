@@ -65,6 +65,11 @@ void wgs_start(void);
 
 bool wgs_is_running(void);
 
+/* Wrap the tunnel netif's input/output with the to_wg/from_wg ACLs and MSS
+ * clamping (netif_hooks.c). Runs on the tcpip thread; wgs_start() calls it. */
+struct netif;
+void wg_netif_hooks_install(struct netif *wg);
+
 /* Settings changes; all take effect after a restart. */
 esp_err_t wgs_set_enabled(bool enabled);            /* generates the server key on first enable */
 esp_err_t wgs_set_port(int port);

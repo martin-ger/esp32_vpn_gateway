@@ -24,6 +24,7 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/lwip_napt.h"
@@ -50,6 +51,15 @@ static const char *TAG = "wg_server";
 #define KEY_HOST     "wgs_host"
 #define KEY_PRIVKEY  "wgs_privkey"
 #define KEY_PEERS    "wgs_peers"
+#define KEY_TS       "wgs_ts"
+
+#define TS_LEN  ESP_WIREGUARD_TIMESTAMP_LEN
+
+/* How often changed handshake timestamps are written to NVS. A client
+ * handshakes about every two minutes while active, so writing each one would
+ * wear the flash; with this interval a captured initiation can be replayed
+ * after a reboot only if it is newer than the last save. */
+#define TS_SAVE_INTERVAL_US  (10ULL * 60 * 1000000)
 
 /* Keepalive written into client configs: keeps the client's NAT mapping open
  * so the server can reach it between its own packets. */
@@ -75,7 +85,20 @@ char     wgs_pubkey[WGS_KEY_SIZE] = "";
 
 static SemaphoreHandle_t lock;
 static wgs_peer_cfg_t *peers;       /* WGS_MAX_PEERS entries, allocated on first use */
+static uint8_t (*peer_ts)[TS_LEN];  /* newest handshake timestamp per peer, same index as peers */
 static int peer_count;
+static esp_timer_handle_t ts_timer;
+
+static bool alloc_tables(void)
+{
+    if (peers == NULL) {
+        peers = calloc(WGS_MAX_PEERS, sizeof(wgs_peer_cfg_t));
+    }
+    if (peer_ts == NULL) {
+        peer_ts = calloc(WGS_MAX_PEERS, TS_LEN);
+    }
+    return peers != NULL && peer_ts != NULL;
+}
 
 /* ---- helpers ---- */
 
@@ -162,8 +185,13 @@ static esp_err_t save_peers(void)
     }
     if (peer_count > 0) {
         err = nvs_set_blob(nvs, KEY_PEERS, peers, (size_t)peer_count * sizeof(wgs_peer_cfg_t));
+        if (err == ESP_OK) {
+            /* Same order as the peers, so both blobs change together */
+            err = nvs_set_blob(nvs, KEY_TS, peer_ts, (size_t)peer_count * TS_LEN);
+        }
     } else {
         err = nvs_erase_key(nvs, KEY_PEERS);
+        nvs_erase_key(nvs, KEY_TS);
         if (err == ESP_ERR_NVS_NOT_FOUND) {
             err = ESP_OK;
         }
@@ -186,12 +214,17 @@ static void load_peers(void)
     if (nvs_get_blob(nvs, KEY_PEERS, NULL, &len) == ESP_OK && len > 0) {
         if (len % sizeof(wgs_peer_cfg_t) != 0 || len / sizeof(wgs_peer_cfg_t) > WGS_MAX_PEERS) {
             ESP_LOGW(TAG, "Ignoring peer table with unexpected size %u", (unsigned)len);
-        } else if ((peers = calloc(WGS_MAX_PEERS, sizeof(wgs_peer_cfg_t))) != NULL &&
-                   nvs_get_blob(nvs, KEY_PEERS, peers, &len) == ESP_OK) {
+        } else if (alloc_tables() && nvs_get_blob(nvs, KEY_PEERS, peers, &len) == ESP_OK) {
             peer_count = (int)(len / sizeof(wgs_peer_cfg_t));
             for (int i = 0; i < peer_count; i++) {
                 peers[i].name[WGS_NAME_SIZE - 1] = '\0';
                 peers[i].pubkey[WGS_KEY_SIZE - 1] = '\0';
+            }
+            /* Timestamps are only trusted if they match the peer table */
+            size_t ts_len = (size_t)peer_count * TS_LEN;
+            if (nvs_get_blob(nvs, KEY_TS, peer_ts, &ts_len) != ESP_OK ||
+                ts_len != (size_t)peer_count * TS_LEN) {
+                memset(peer_ts, 0, WGS_MAX_PEERS * TS_LEN);
             }
         }
     }
@@ -244,22 +277,55 @@ static uint32_t next_free_ip(void)
     return 0;
 }
 
-static esp_err_t live_add(const wgs_peer_cfg_t *p)
+static esp_err_t live_add(int i)
 {
     esp_wireguard_server_peer_t peer = {
-        .public_key = p->pubkey,
+        .public_key = peers[i].pubkey,
         .preshared_key = NULL,
-        .allowed_ip = p->ip,
+        .allowed_ip = peers[i].ip,
         .keepalive = 0,
+        .greatest_timestamp = peer_ts[i],
     };
     return esp_wireguard_server_add_peer(&peer);
 }
 
-static esp_err_t napt_enable_cb(void *ctx)
+/* Runs on the tcpip thread right after the server created its netif */
+static esp_err_t netif_setup_cb(void *ctx)
 {
     (void)ctx;
     ip_napt_enable(wgs_ip, 1);
+    wg_netif_hooks_install(esp_wireguard_server_netif());
     return ESP_OK;
+}
+
+/* Periodic (esp_timer task): persist handshake timestamps that moved on */
+static void ts_timer_cb(void *arg)
+{
+    (void)arg;
+    bool dirty = false;
+
+    if (!esp_wireguard_server_is_running()) {
+        return;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    for (int i = 0; i < peer_count; i++) {
+        esp_wireguard_server_peer_stats_t st;
+        if (esp_wireguard_server_get_peer_stats(peers[i].pubkey, &st) == ESP_OK &&
+            memcmp(peer_ts[i], st.greatest_timestamp, TS_LEN) != 0) {
+            memcpy(peer_ts[i], st.greatest_timestamp, TS_LEN);
+            dirty = true;
+        }
+    }
+    if (dirty) {
+        nvs_handle_t nvs;
+        if (nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+            if (nvs_set_blob(nvs, KEY_TS, peer_ts, (size_t)peer_count * TS_LEN) == ESP_OK) {
+                nvs_commit(nvs);
+            }
+            nvs_close(nvs);
+        }
+    }
+    xSemaphoreGive(lock);
 }
 
 /* ---- settings ---- */
@@ -346,12 +412,18 @@ void wgs_start(void)
     mbedtls_platform_zeroize(priv, sizeof(priv));
     if (err == ESP_OK) {
         for (int i = 0; i < peer_count; i++) {
-            esp_err_t perr = live_add(&peers[i]);
+            esp_err_t perr = live_add(i);
             if (perr != ESP_OK) {
                 ESP_LOGW(TAG, "Peer %s not added: %s", peers[i].name, esp_err_to_name(perr));
             }
         }
-        esp_netif_tcpip_exec(napt_enable_cb, NULL);
+        esp_netif_tcpip_exec(netif_setup_cb, NULL);
+        if (ts_timer == NULL) {
+            const esp_timer_create_args_t args = { .callback = ts_timer_cb, .name = "wgs_ts" };
+            if (esp_timer_create(&args, &ts_timer) == ESP_OK) {
+                esp_timer_start_periodic(ts_timer, TS_SAVE_INTERVAL_US);
+            }
+        }
     }
     int n = peer_count;
     xSemaphoreGive(lock);
@@ -501,10 +573,7 @@ esp_err_t wgs_peer_add(const char *name, const char *pubkey, uint32_t ip,
     }
 
     xSemaphoreTake(lock, portMAX_DELAY);
-    if (peers == NULL) {
-        peers = calloc(WGS_MAX_PEERS, sizeof(wgs_peer_cfg_t));
-    }
-    if (peers == NULL || peer_count >= WGS_MAX_PEERS) {
+    if (!alloc_tables() || peer_count >= WGS_MAX_PEERS) {
         err = ESP_ERR_NO_MEM;
         goto done;
     }
@@ -533,10 +602,11 @@ esp_err_t wgs_peer_add(const char *name, const char *pubkey, uint32_t ip,
     }
     p.ip = ip;
 
+    memset(peer_ts[peer_count], 0, TS_LEN);
     peers[peer_count++] = p;
     err = save_peers();
     if (err == ESP_OK && esp_wireguard_server_is_running()) {
-        err = live_add(&p);
+        err = live_add(peer_count - 1);
         if (err != ESP_OK) {
             peer_count--;
             save_peers();
@@ -576,8 +646,10 @@ esp_err_t wgs_peer_del(const char *name)
             esp_wireguard_server_remove_peer(peers[i].pubkey);
         }
         memmove(&peers[i], &peers[i + 1], (size_t)(peer_count - i - 1) * sizeof(wgs_peer_cfg_t));
+        memmove(peer_ts[i], peer_ts[i + 1], (size_t)(peer_count - i - 1) * TS_LEN);
         peer_count--;
         memset(&peers[peer_count], 0, sizeof(wgs_peer_cfg_t));
+        memset(peer_ts[peer_count], 0, TS_LEN);
         err = save_peers();
     }
     xSemaphoreGive(lock);

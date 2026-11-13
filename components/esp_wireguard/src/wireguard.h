@@ -76,6 +76,24 @@ extern "C" {
 #define REKEY_TIMEOUT				(5)
 #define KEEPALIVE_TIMEOUT			(10)
 
+// Anti-replay window (RFC 6479): a bitmap of this many bits, of which all but one 32-bit word are usable as
+// window. Must be a power of two and a multiple of 32. Forwarding several flows over Wi-Fi reorders more than
+// the 32 packets the original window tolerated.
+#define WIREGUARD_REPLAY_BITS		(256)
+#define WIREGUARD_REPLAY_WORDS		(WIREGUARD_REPLAY_BITS / 32)
+#define WIREGUARD_REPLAY_WINDOW		(WIREGUARD_REPLAY_BITS - 32)
+
+// Handshake load control (per device, counted over one-second windows)
+// More handshake messages with a valid mac1 than this in one second puts the device under load: from then on
+// a valid mac2 (cookie) is required, which proves the sender can receive at its source address
+#define WIREGUARD_LOAD_THRESHOLD	(5)
+// How long the device stays under load after the last second that exceeded the threshold
+#define WIREGUARD_LOAD_HOLD			(5)
+// Hard cap on handshake messages per second that are passed on to the public key operations
+#define WIREGUARD_MAX_HANDSHAKES_PER_SECOND	(10)
+// Hard cap on cookie replies per second, so the device cannot be used to flood a spoofed source
+#define WIREGUARD_MAX_COOKIES_PER_SECOND	(20)
+
 struct wireguard_keypair {
 	bool valid;
 	bool initiator; // Did we initiate this session (send the initiation packet rather than sending the response packet)
@@ -91,7 +109,7 @@ struct wireguard_keypair {
 	uint32_t last_tx;
 	uint32_t last_rx;
 
-	uint32_t replay_bitmap;
+	uint32_t replay_bitmap[WIREGUARD_REPLAY_WORDS];
 	uint64_t replay_counter;
 
 	uint32_t local_index; // This is the index we generated for our end
@@ -191,6 +209,14 @@ struct wireguard_device {
 	// Keep the netif link up even while no peer has a session (server mode), so that
 	// traffic for the tunnel subnet is dropped here instead of following the default route
 	bool link_always_up;
+
+	// Handshake load control - see WIREGUARD_LOAD_THRESHOLD
+	uint32_t load_window_millis;	// start of the current one-second window
+	uint16_t load_seen;				// handshake messages with valid mac1 in this window
+	uint16_t load_admitted;			// of those, passed on for processing
+	uint16_t load_cookies;			// cookie replies sent in this window
+	bool under_load;
+	uint32_t under_load_millis;		// last time the threshold was exceeded
 
 	uint8_t public_key[WIREGUARD_PUBLIC_KEY_LEN];
 	uint8_t private_key[WIREGUARD_PRIVATE_KEY_LEN];

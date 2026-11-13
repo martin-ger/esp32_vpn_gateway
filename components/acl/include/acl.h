@@ -10,6 +10,10 @@
  * - from_esp: ESP32 -> Internet (outgoing on uplink interface)
  * - to_ap:    Clients -> ESP32 (incoming on AP interface)
  * - from_ap:  ESP32 -> Clients (outgoing on AP interface)
+ *
+ * With the WireGuard server (CONFIG_WG_SERVER) two more lists exist:
+ * - to_wg:    VPN clients -> ESP32 (incoming on the tunnel interface)
+ * - from_wg:  ESP32 -> VPN clients (outgoing on the tunnel interface)
  */
 
 #pragma once
@@ -17,6 +21,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "sdkconfig.h"
 #include "lwip/pbuf.h"
 
 #ifdef __cplusplus
@@ -28,7 +33,13 @@ extern "C" {
 #define ACL_FROM_ESP  1   /* ESP32 -> Internet (uplink output) */
 #define ACL_TO_AP     2   /* Clients -> ESP32 (AP interface input) */
 #define ACL_FROM_AP   3   /* ESP32 -> Clients (AP interface output) */
+#if CONFIG_WG_SERVER
+#define ACL_TO_WG     4   /* VPN clients -> ESP32 (WireGuard server tunnel input) */
+#define ACL_FROM_WG   5   /* ESP32 -> VPN clients (WireGuard server tunnel output) */
+#define MAX_ACL_LISTS 6
+#else
 #define MAX_ACL_LISTS 4
+#endif
 
 /* Maximum rules per ACL list */
 #define MAX_ACL_ENTRIES 16
@@ -157,6 +168,16 @@ bool acl_delete(uint8_t acl_no, uint8_t rule_idx);
  * @return Action code (ACL_DENY, ACL_ALLOW, ACL_ALLOW|ACL_MONITOR, ACL_DENY|ACL_MONITOR, or ACL_NO_MATCH)
  */
 uint8_t acl_check_packet(uint8_t acl_no, struct pbuf *p);
+
+/**
+ * @brief Check a bare IP packet (no link-layer header) against an ACL list
+ *
+ * For interfaces without a link layer, such as the WireGuard tunnel.
+ * acl_check_packet() guesses whether an Ethernet header is present from the
+ * bytes where the EtherType would be; on a bare IP packet those are part of
+ * the source address, so the guess can be wrong there.
+ */
+uint8_t acl_check_ip_packet(uint8_t acl_no, struct pbuf *p);
 
 /**
  * @brief Get the ACL rules array for a list (for display/NVS)

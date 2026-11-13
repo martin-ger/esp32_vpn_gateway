@@ -3232,6 +3232,9 @@ static int acl_cmd(int argc, char **argv)
     if (argc < 2) {
         printf("Usage: acl <list> <action> [params...]\n");
         printf("Lists: from_esp, to_esp, from_ap, to_ap\n");
+#if CONFIG_WG_SERVER
+        printf("       from_wg, to_wg (WireGuard server tunnel)\n");
+#endif
         printf("\nActions:\n");
         printf("  acl <list> clear              - Clear all rules from list\n");
         printf("  acl <list> clear_stats        - Clear statistics for list\n");
@@ -3257,6 +3260,9 @@ static int acl_cmd(int argc, char **argv)
     if (list_no < 0) {
         printf("Invalid ACL list: %s\n", argv[1]);
         printf("Use: from_esp, to_esp, from_ap, to_ap\n");
+#if CONFIG_WG_SERVER
+        printf("     from_wg, to_wg (WireGuard server tunnel)\n");
+#endif
         return 1;
     }
 

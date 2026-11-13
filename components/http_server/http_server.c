@@ -157,6 +157,12 @@ static esp_err_t http_open_fn(httpd_handle_t hd, int sockfd)
             on_vpn = true;
         }
     }
+#if CONFIG_WG_SERVER
+    /* Connections from WireGuard server clients to the tunnel address */
+    if (local_ip != 0 && local_ip == wgs_ip && wgs_is_running()) {
+        on_vpn = true;
+    }
+#endif
 
     /* Enforce interface access policy */
     bool allowed = false;
@@ -3760,6 +3766,359 @@ static httpd_uri_t vpnp = {
     .handler   = vpn_get_handler,
 };
 
+#if CONFIG_WG_SERVER
+/* --- WireGuard server page and API --- */
+
+static void wgs_fmt_bytes(uint64_t v, char *buf, size_t len)
+{
+    if (v >= 1024ULL * 1024 * 1024) {
+        snprintf(buf, len, "%.1f GB", (double)v / (1024.0 * 1024 * 1024));
+    } else if (v >= 1024 * 1024) {
+        snprintf(buf, len, "%.1f MB", (double)v / (1024.0 * 1024));
+    } else if (v >= 1024) {
+        snprintf(buf, len, "%.1f KB", (double)v / 1024.0);
+    } else {
+        snprintf(buf, len, "%u B", (unsigned)v);
+    }
+}
+
+static esp_err_t wgserver_get_handler(httpd_req_t *req)
+{
+    resume_sta_if_scan_idle();
+    bool password_protection_enabled = is_web_password_set();
+
+    if (password_protection_enabled && !is_authenticated(req)) {
+        { char _ip[16]; ESP_LOGW(TAG, "Unauthenticated access to /wgserver from %s", get_client_ip(req, _ip, sizeof(_ip))); }
+        httpd_resp_set_status(req, "303 See Other");
+        httpd_resp_set_hdr(req, "Location", "/?auth_required=1");
+        httpd_resp_send(req, NULL, 0);
+        return ESP_OK;
+    }
+
+    /* Stack buffers and a stack peer snapshot: SEND_CHUNK returns on a dead
+     * client, so nothing here may need freeing. */
+    char row[768];
+    char ipbuf[16], maskbuf[16];
+    wgs_peer_info_t list[WGS_MAX_PEERS];
+    esp_ip4_addr_t a;
+
+    SEND_CHUNK(req, WGS_CHUNK_HEAD, HTTPD_RESP_USE_STRLEN);
+    if (session_active && password_protection_enabled) {
+        SEND_CHUNK(req,
+            "<a href='/?logout=1' style='padding: 0.4rem 1rem; background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid #ff5252; border-radius: 6px; text-decoration: none; font-size: 0.85rem; font-weight: 500;'>Logout</a>",
+            HTTPD_RESP_USE_STRLEN);
+    }
+    SEND_CHUNK(req, WGS_CHUNK_SCRIPT, HTTPD_RESP_USE_STRLEN);
+
+    a.addr = wgs_ip;
+    esp_ip4addr_ntoa(&a, ipbuf, sizeof(ipbuf));
+    a.addr = wgs_mask;
+    esp_ip4addr_ntoa(&a, maskbuf, sizeof(maskbuf));
+
+    /* Status */
+    const char *state, *color;
+    if (!wgs_enabled) {
+        state = "Disabled"; color = "#888";
+    } else if (wgs_is_running()) {
+        state = "Running"; color = "#4caf50";
+    } else if (vpn_enabled) {
+        state = "Blocked: WireGuard client is enabled"; color = "#f44336";
+    } else {
+        state = "Waiting for uplink"; color = "#ffc107";
+    }
+    snprintf(row, sizeof(row),
+        "<h2>Status</h2><table class='f'>"
+        "<tr><td>Server</td><td><strong style='color:%s;'>%s</strong></td></tr>"
+        "<tr><td>Public Key</td><td style='word-break:break-all;'>%s</td></tr>"
+        "</table>",
+        color, state, wgs_pubkey[0] ? wgs_pubkey : "not generated yet");
+    SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+
+    /* Settings (wgs_host is restricted to letters, digits, '.', '-' when stored) */
+    snprintf(row, sizeof(row),
+        "<h2>Settings</h2><table class='f'>"
+        "<tr><td>Enabled</td><td><select id='en'><option value='1' %s>Yes</option><option value='0' %s>No</option></select></td></tr>"
+        "<tr><td>Listen Port</td><td><input type='number' id='po' value='%d' min='1' max='65535'/></td></tr>"
+        "<tr><td>Tunnel IP</td><td><input type='text' id='ip' value='%s'/></td></tr>"
+        "<tr><td>Netmask</td><td><input type='text' id='ma' value='%s'/></td></tr>",
+        wgs_enabled ? "selected" : "", wgs_enabled ? "" : "selected",
+        (int)wgs_port, ipbuf, maskbuf);
+    SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+    snprintf(row, sizeof(row),
+        "<tr><td>Public Host</td><td><input type='text' id='ho' value='%s' maxlength='%d' placeholder='e.g. myhome.example.org'/>"
+        "<small>Address clients dial (Endpoint). Forward UDP port %d on the upstream router to this device. "
+        "If empty, client configs use the current uplink address.</small></td></tr>"
+        "<tr><td></td><td><button type='button' class='ok-button' onclick='save()'>Save</button>"
+        "<small>Changing Enabled, Port or Tunnel IP reboots the router. The tunnel subnet can only be changed while no clients exist.</small></td></tr>"
+        "</table>",
+        wgs_host, WGS_HOST_SIZE - 1, (int)wgs_port);
+    SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+
+    /* Clients */
+    int n = wgs_peer_list(list, WGS_MAX_PEERS);
+    snprintf(row, sizeof(row),
+        "<h2>Clients (%d/%d)</h2><table class='p'>"
+        "<tr><th>Name</th><th>Tunnel IP</th><th>State</th><th>Endpoint</th><th>Handshake</th><th>RX / TX</th><th></th></tr>",
+        n, WGS_MAX_PEERS);
+    SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+    for (int i = 0; i < n; i++) {
+        char tip[16], ep[24] = "-", hs[24] = "-", rx[16], tx[16];
+        a.addr = list[i].cfg.ip;
+        esp_ip4addr_ntoa(&a, tip, sizeof(tip));
+        if (list[i].endpoint_ip != 0) {
+            esp_ip4_addr_t e = { .addr = list[i].endpoint_ip };
+            snprintf(ep, sizeof(ep), IPSTR ":%u", IP2STR(&e), (unsigned)list[i].endpoint_port);
+        }
+        if (list[i].handshake_age_s != UINT32_MAX) {
+            snprintf(hs, sizeof(hs), "%lus ago", (unsigned long)list[i].handshake_age_s);
+        }
+        wgs_fmt_bytes(list[i].rx_bytes, rx, sizeof(rx));
+        wgs_fmt_bytes(list[i].tx_bytes, tx, sizeof(tx));
+        /* Names are restricted to letters, digits, '-', '_' when stored */
+        snprintf(row, sizeof(row),
+            "<tr><td>%.15s</td><td>%s</td><td style='color:%s;'>%s</td><td>%s</td><td>%s</td><td>%s / %s</td>"
+            "<td><button class='sb' onclick='pc(\"%.15s\")'>Config</button>"
+            "<button class='sb d' onclick='pd(\"%.15s\")'>Delete</button></td></tr>",
+            list[i].cfg.name, tip, list[i].up ? "#4caf50" : "#888", list[i].up ? "up" : "down",
+            ep, hs, rx, tx, list[i].cfg.name, list[i].cfg.name);
+        SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+    }
+    if (n == 0) {
+        SEND_CHUNK(req, "<tr><td colspan='7' style='color:#888;'>No clients yet</td></tr>", HTTPD_RESP_USE_STRLEN);
+    }
+    SEND_CHUNK(req, "</table>", HTTPD_RESP_USE_STRLEN);
+
+    SEND_CHUNK(req, WGS_CHUNK_ADD, HTTPD_RESP_USE_STRLEN);
+    SEND_CHUNK(req, NULL, 0);
+    return ESP_OK;
+}
+
+static httpd_uri_t wgserverp = {
+    .uri       = "/wgserver",
+    .method    = HTTP_GET,
+    .handler   = wgserver_get_handler,
+};
+
+/* Read one urlencoded field of the POST body into out (decoded). */
+static bool wgs_field(const char *body, const char *key, char *out, size_t len)
+{
+    if (httpd_query_key_value(body, key, out, len) != ESP_OK) {
+        out[0] = '\0';
+        return false;
+    }
+    preprocess_string(out);
+    return true;
+}
+
+/* Send {"ok":..,"reboot":..,"msg":".."[,"conf":".."]}. msg is a literal from
+ * this file; conf holds only config text (escaped here for JSON). */
+static esp_err_t wgs_reply(httpd_req_t *req, bool ok, const char *msg, bool reboot, const char *conf)
+{
+    const size_t cap = WGS_CLIENT_CONF_SIZE * 2 + 192;
+    char *out = malloc(cap);
+    if (out == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
+    int n = snprintf(out, cap, "{\"ok\":%s,\"reboot\":%s,\"msg\":\"%s\"",
+                     ok ? "true" : "false", reboot ? "true" : "false", msg);
+    if (conf != NULL) {
+        n += snprintf(out + n, cap - n, ",\"conf\":\"");
+        for (const char *p = conf; *p && (size_t)n < cap - 8; p++) {
+            if (*p == '\n') {
+                out[n++] = '\\'; out[n++] = 'n';
+            } else if (*p == '"' || *p == '\\') {
+                out[n++] = '\\'; out[n++] = *p;
+            } else if ((unsigned char)*p >= 0x20) {
+                out[n++] = *p;
+            }
+        }
+        out[n++] = '"';
+    }
+    out[n++] = '}';
+    out[n] = '\0';
+
+    httpd_resp_set_type(req, "application/json");
+    /* The reply may carry a client private key */
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t err = httpd_resp_send(req, out, n);
+    memset(out, 0, cap);
+    free(out);
+    return err;
+}
+
+static esp_err_t wgs_reply_conf(httpd_req_t *req, const wgs_peer_cfg_t *peer, const char *priv,
+                                bool full_tunnel, const char *msg)
+{
+    char *conf = malloc(WGS_CLIENT_CONF_SIZE);
+    esp_err_t err;
+
+    if (conf != NULL && wgs_client_config(peer, priv, full_tunnel, conf, WGS_CLIENT_CONF_SIZE) >= 0) {
+        err = wgs_reply(req, true, msg, false, conf);
+        memset(conf, 0, WGS_CLIENT_CONF_SIZE);
+    } else {
+        err = wgs_reply(req, false, "Could not build the client config", false, NULL);
+    }
+    free(conf);
+    return err;
+}
+
+static esp_err_t wgs_api_settings(httpd_req_t *req, const char *body)
+{
+    char val[WGS_HOST_SIZE + 8];
+    char mask_str[20];
+    bool reboot = false;
+    ip4_addr_t ip, mask;
+
+    /* An empty host= is a valid value: it clears the setting */
+    if (wgs_field(body, "host", val, sizeof(val)) || strstr(body, "host=") != NULL) {
+        if (strcmp(val, wgs_host) != 0 && wgs_set_host(val) != ESP_OK) {
+            return wgs_reply(req, false, "Invalid public host (letters, digits, '.', '-')", false, NULL);
+        }
+    }
+    if (wgs_field(body, "port", val, sizeof(val)) && atoi(val) != wgs_port) {
+        if (wgs_set_port(atoi(val)) != ESP_OK) {
+            return wgs_reply(req, false, "Port must be 1-65535", false, NULL);
+        }
+        reboot = true;
+    }
+    if (wgs_field(body, "ip", val, sizeof(val)) && wgs_field(body, "mask", mask_str, sizeof(mask_str))) {
+        if (!ip4addr_aton(val, &ip) || !ip4addr_aton(mask_str, &mask)) {
+            return wgs_reply(req, false, "Invalid tunnel IP or netmask", false, NULL);
+        }
+        if (ip.addr != wgs_ip || mask.addr != wgs_mask) {
+            esp_err_t err = wgs_set_subnet(ip.addr, mask.addr);
+            if (err == ESP_ERR_INVALID_STATE) {
+                return wgs_reply(req, false, "Remove all clients before changing the tunnel subnet", false, NULL);
+            }
+            if (err != ESP_OK) {
+                return wgs_reply(req, false, "Invalid subnet: host address, /16 to /30, no overlap with the AP network", false, NULL);
+            }
+            reboot = true;
+        }
+    }
+    if (wgs_field(body, "enabled", val, sizeof(val)) && (atoi(val) != 0) != (wgs_enabled != 0)) {
+        esp_err_t err = wgs_set_enabled(atoi(val) != 0);
+        if (err == ESP_ERR_INVALID_STATE) {
+            return wgs_reply(req, false, "Disable the WireGuard client on the VPN page first", false, NULL);
+        }
+        if (err != ESP_OK) {
+            return wgs_reply(req, false, "Saving failed", false, NULL);
+        }
+        reboot = true;
+    }
+    if (reboot) {
+        esp_timer_start_once(restart_timer, 3000000);
+        return wgs_reply(req, true, "Saved. Rebooting...", true, NULL);
+    }
+    return wgs_reply(req, true, "Saved.", false, NULL);
+}
+
+static esp_err_t wgserver_api_handler(httpd_req_t *req)
+{
+    if (!check_csrf(req)) {
+        { char _ip[16]; ESP_LOGW(TAG, "CSRF rejected /api/wgserver from %s", get_client_ip(req, _ip, sizeof(_ip))); }
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF check failed");
+        return ESP_FAIL;
+    }
+    if (is_web_password_set() && !is_authenticated(req)) {
+        { char _ip[16]; ESP_LOGW(TAG, "Unauthenticated access to /api/wgserver from %s", get_client_ip(req, _ip, sizeof(_ip))); }
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Not authenticated");
+        return ESP_FAIL;
+    }
+
+    char body[384];
+    if (req->content_len == 0 || req->content_len >= sizeof(body)) {
+        return wgs_reply(req, false, "Invalid request", false, NULL);
+    }
+    int total = 0;
+    while (total < req->content_len) {
+        int ret = httpd_req_recv(req, body + total, req->content_len - total);
+        if (ret <= 0) {
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
+            return ESP_FAIL;
+        }
+        total += ret;
+    }
+    body[total] = '\0';
+
+    char action[12], name[WGS_NAME_SIZE + 4], val[64];
+    wgs_field(body, "action", action, sizeof(action));
+    wgs_field(body, "name", name, sizeof(name));
+    bool full_tunnel = !(wgs_field(body, "split", val, sizeof(val)) && atoi(val) != 0);
+
+    if (strcmp(action, "settings") == 0) {
+        return wgs_api_settings(req, body);
+    }
+
+    if (strcmp(action, "add") == 0) {
+        char priv[WGS_KEY_SIZE];
+        wgs_peer_cfg_t peer;
+        ip4_addr_t ip = { .addr = 0 };
+        bool have_key = wgs_field(body, "pubkey", val, sizeof(val)) && val[0];
+        char ipstr[20];
+
+        if (wgs_field(body, "pip", ipstr, sizeof(ipstr)) && ipstr[0] && !ip4addr_aton(ipstr, &ip)) {
+            return wgs_reply(req, false, "Invalid tunnel IP", false, NULL);
+        }
+        esp_err_t err = wgs_peer_add(name, have_key ? val : NULL, ip.addr, priv, &peer);
+        switch (err) {
+        case ESP_OK:
+            break;
+        case ESP_ERR_INVALID_ARG:
+            return wgs_reply(req, false, "Invalid name (1-15 letters, digits, '-', '_'), key, or address outside the tunnel subnet", false, NULL);
+        case ESP_ERR_INVALID_STATE:
+            return wgs_reply(req, false, "Name, key or address already in use", false, NULL);
+        case ESP_ERR_NO_MEM:
+            return wgs_reply(req, false, "Client table full or no free address", false, NULL);
+        default:
+            return wgs_reply(req, false, "Adding the client failed", false, NULL);
+        }
+        ESP_LOGI(TAG, "WireGuard server: client '%s' added", peer.name);
+        err = wgs_reply_conf(req, &peer, priv, full_tunnel,
+                             priv[0] ? "Client added. Save this config now: the private key is not stored and cannot be shown again."
+                                     : "Client added.");
+        memset(priv, 0, sizeof(priv));
+        return err;
+    }
+
+    if (strcmp(action, "del") == 0) {
+        esp_err_t err = wgs_peer_del(name);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "WireGuard server: client '%s' removed", name);
+            return wgs_reply(req, true, "Client removed.", false, NULL);
+        }
+        return wgs_reply(req, false, err == ESP_ERR_NOT_FOUND ? "No such client" : "Client disconnected, but saving failed", false, NULL);
+    }
+
+    if (strcmp(action, "conf") == 0) {
+        wgs_peer_info_t *list = malloc(WGS_MAX_PEERS * sizeof(wgs_peer_info_t));
+        esp_err_t err = ESP_FAIL;
+        bool found = false;
+        if (list != NULL) {
+            int n = wgs_peer_list(list, WGS_MAX_PEERS);
+            for (int i = 0; i < n && !found; i++) {
+                if (strcmp(list[i].cfg.name, name) == 0) {
+                    found = true;
+                    err = wgs_reply_conf(req, &list[i].cfg, NULL, full_tunnel,
+                                         "Config without the private key: put the client's own key in the PrivateKey line.");
+                }
+            }
+            free(list);
+        }
+        return found ? err : wgs_reply(req, false, "No such client", false, NULL);
+    }
+
+    return wgs_reply(req, false, "Unknown action", false, NULL);
+}
+
+static httpd_uri_t wgserver_apip = {
+    .uri       = "/api/wgserver",
+    .method    = HTTP_POST,
+    .handler   = wgserver_api_handler,
+};
+#endif /* CONFIG_WG_SERVER */
+
 static esp_err_t captive_redirect_handler(httpd_req_t *req, httpd_err_code_t err);
 
 httpd_handle_t start_webserver(uint16_t port)
@@ -3768,7 +4127,11 @@ httpd_handle_t start_webserver(uint16_t port)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
     config.stack_size = 16384;  // Large stack needed for mappings page with 3x 2KB HTML buffers
+#if CONFIG_WG_SERVER
+    config.max_uri_handlers = 16;
+#else
     config.max_uri_handlers = 14;
+#endif
     config.max_uri_len = 1024;
     config.open_fn = http_open_fn;
     /* Fail a stalled send/recv fast (default 5s) so an abandoned connection
@@ -3816,6 +4179,10 @@ httpd_handle_t start_webserver(uint16_t port)
         httpd_register_uri_handler(server, &config_exportp);
         httpd_register_uri_handler(server, &config_importp);
         httpd_register_uri_handler(server, &vpn_importp);
+#if CONFIG_WG_SERVER
+        httpd_register_uri_handler(server, &wgserverp);
+        httpd_register_uri_handler(server, &wgserver_apip);
+#endif
         httpd_register_uri_handler(server, &ota_uploadp);
 
 #if CONFIG_ETH_UPLINK

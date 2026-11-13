@@ -181,6 +181,13 @@ font-size: 0.8rem;\
 </table>\
 </div>"
 
+/* Link to the WireGuard server page (S3 / WT32-ETH01 builds) */
+#if CONFIG_WG_SERVER
+#define INDEX_WGS_BUTTON "<a href='/wgserver' class='nav-button'>🔐 VPN Server</a>"
+#else
+#define INDEX_WGS_BUTTON ""
+#endif
+
 #if !CONFIG_ETH_UPLINK
 #define INDEX_CHUNK_BUTTONS "\
 <div class='button-container'>\
@@ -189,7 +196,7 @@ font-size: 0.8rem;\
 <a href='/config' class='nav-button'>⚙️ Configuration</a>\
 <a href='/mappings' class='nav-button'>🔀 Mappings</a>\
 <a href='/firewall' class='nav-button'>🛡️ Firewall</a>\
-<a href='/vpn' class='nav-button'>🔒 VPN</a>\
+<a href='/vpn' class='nav-button'>🔒 VPN</a>" INDEX_WGS_BUTTON "\
 </div>"
 #else
 #define INDEX_CHUNK_BUTTONS "\
@@ -197,7 +204,7 @@ font-size: 0.8rem;\
 <a href='/config' class='nav-button'>⚙️ Configuration</a>\
 <a href='/mappings' class='nav-button'>🔀 Mappings</a>\
 <a href='/firewall' class='nav-button'>🛡️ Firewall</a>\
-<a href='/vpn' class='nav-button'>🔒 VPN</a>\
+<a href='/vpn' class='nav-button'>🔒 VPN</a>" INDEX_WGS_BUTTON "\
 </div>"
 #endif
 /* Auth UI streamed here */

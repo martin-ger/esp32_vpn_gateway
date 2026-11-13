@@ -58,6 +58,13 @@ input:focus, select:focus { outline: none; border-color: #00d9ff; }\
 </div>\
 <p style='color: #888; font-size: 0.8rem; margin-bottom: 0.8rem;'>Rules processed top-down. First match wins. No match = allow (permissive).</p>"
 
+/* Extra directions for the WireGuard server tunnel */
+#if CONFIG_WG_SERVER
+#define FIREWALL_WG_OPTIONS "<option value='4'>VPN clients to ESP (to_wg)</option><option value='5'>ESP to VPN clients (from_wg)</option>"
+#else
+#define FIREWALL_WG_OPTIONS ""
+#endif
+
 /* After ACL sections (add form and footer) */
 #define FIREWALL_CHUNK_TAIL "\
 <h2>Add ACL Rule</h2>\
@@ -67,7 +74,7 @@ input:focus, select:focus { outline: none; border-color: #00d9ff; }\
 <option value='0'>Internet to ESP (to_esp)</option>\
 <option value='1'>ESP to Internet (from_esp)</option>\
 <option value='2'>Clients to ESP (to_ap)</option>\
-<option value='3'>ESP to Clients (from_ap)</option>\
+<option value='3'>ESP to Clients (from_ap)</option>" FIREWALL_WG_OPTIONS "\
 </select></td></tr>\
 <tr><td>Protocol</td><td><select name='proto'>\
 <option value='0'>IP (Any)</option>\

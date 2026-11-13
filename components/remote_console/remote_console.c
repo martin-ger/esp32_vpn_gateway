@@ -28,6 +28,7 @@
 #include "router_config.h"
 #include "wifi_config.h"
 #include "vpn_config.h"
+#include "wg_server.h"
 #include "web_password.h"
 
 /* MSG_NOSIGNAL may not be defined on all platforms */
@@ -809,6 +810,12 @@ static void remote_console_task(void *arg) {
                         allowed = true;
                     }
                 }
+#if CONFIG_WG_SERVER
+                /* Connections from WireGuard server clients to the tunnel address */
+                if ((rc_config.bind & RC_BIND_VPN) && local_ip == wgs_ip && wgs_is_running()) {
+                    allowed = true;
+                }
+#endif
 
                 if (!allowed) {
                     ESP_LOGW(TAG, "Connection from %s rejected (interface not allowed)", rc_state.client_ip);

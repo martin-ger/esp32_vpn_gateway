@@ -5,6 +5,7 @@
  */
 
 #include <string.h>
+#include <stdlib.h>
 #include "esp_log.h"
 #include "nvs.h"
 #include "acl.h"
@@ -12,13 +13,23 @@
 
 static const char *TAG = "acl_nvs";
 
+static const char *const acl_keys[MAX_ACL_LISTS] = {
+    "acl_0", "acl_1", "acl_2", "acl_3",
+#if CONFIG_WG_SERVER
+    "acl_4", "acl_5",
+#endif
+};
+
 esp_err_t save_acl_rules(void) {
     esp_err_t err;
     nvs_handle_t nvs;
 
     /* Snapshot all ACL lists under the lock, then write to NVS outside
      * the lock to avoid blocking packet processing during flash I/O. */
-    acl_entry_t snapshot[MAX_ACL_LISTS][MAX_ACL_ENTRIES];
+    acl_entry_t (*snapshot)[MAX_ACL_ENTRIES] = malloc(sizeof(acl_entry_t) * MAX_ACL_LISTS * MAX_ACL_ENTRIES);
+    if (snapshot == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
     acl_lock();
     for (int i = 0; i < MAX_ACL_LISTS; i++) {
         acl_entry_t* rules = acl_get_rules(i);
@@ -30,10 +41,10 @@ esp_err_t save_acl_rules(void) {
 
     err = nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &nvs);
     if (err != ESP_OK) {
+        free(snapshot);
         return err;
     }
 
-    const char* acl_keys[MAX_ACL_LISTS] = {"acl_0", "acl_1", "acl_2", "acl_3"};
     for (int i = 0; i < MAX_ACL_LISTS; i++) {
         err = nvs_set_blob(nvs, acl_keys[i], snapshot[i], sizeof(acl_entry_t) * MAX_ACL_ENTRIES);
         if (err != ESP_OK) {
@@ -46,6 +57,7 @@ esp_err_t save_acl_rules(void) {
         ESP_LOGI(TAG, "ACL rules saved to NVS");
     }
     nvs_close(nvs);
+    free(snapshot);
     return err;
 }
 
@@ -63,7 +75,6 @@ esp_err_t load_acl_rules(void) {
     }
 
     /* Load each ACL list */
-    const char* acl_keys[MAX_ACL_LISTS] = {"acl_0", "acl_1", "acl_2", "acl_3"};
     acl_lock();
     for (int i = 0; i < MAX_ACL_LISTS; i++) {
         acl_entry_t* rules = acl_get_rules(i);

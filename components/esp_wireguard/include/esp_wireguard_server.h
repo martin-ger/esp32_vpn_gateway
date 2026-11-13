@@ -27,6 +27,9 @@ extern "C" {
 /** Size of a buffer holding a base64 WireGuard key including the NUL. */
 #define ESP_WIREGUARD_KEY_B64_SIZE  (45)
 
+/** Length of a TAI64N handshake timestamp. */
+#define ESP_WIREGUARD_TIMESTAMP_LEN (12)
+
 typedef struct {
     const char *private_key;   /**< base64 private key of the server. Only read during start. */
     uint16_t    listen_port;   /**< UDP port to listen on. */
@@ -42,6 +45,9 @@ typedef struct {
     const char *preshared_key;  /**< base64 preshared key, NULL if unused. */
     uint32_t    allowed_ip;     /**< tunnel address of the peer (/32), network byte order. */
     uint16_t    keepalive;      /**< persistent keepalive in seconds, 0 = off. */
+    const uint8_t *greatest_timestamp; /**< ESP_WIREGUARD_TIMESTAMP_LEN bytes saved from an earlier
+                                            run (see peer stats), NULL if none. Handshake initiations
+                                            not newer than this are rejected as replays. */
 } esp_wireguard_server_peer_t;
 
 typedef struct {
@@ -51,6 +57,9 @@ typedef struct {
     uint32_t handshake_age_s;    /**< seconds since the last session was created, UINT32_MAX if none. */
     uint64_t rx_bytes;           /**< inner bytes received from the peer. */
     uint64_t tx_bytes;           /**< inner bytes sent to the peer. */
+    uint8_t  greatest_timestamp[ESP_WIREGUARD_TIMESTAMP_LEN]; /**< TAI64N of the newest accepted
+                                      handshake initiation. Persist it and hand it back in
+                                      esp_wireguard_server_peer_t after a restart. */
 } esp_wireguard_server_peer_stats_t;
 
 /**

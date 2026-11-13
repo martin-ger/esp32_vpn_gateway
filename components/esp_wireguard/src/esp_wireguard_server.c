@@ -21,6 +21,8 @@
 
 #define TAG "esp_wireguard_srv"
 
+_Static_assert(ESP_WIREGUARD_TIMESTAMP_LEN == WIREGUARD_TAI64N_LEN, "timestamp length mismatch");
+
 static struct netif srv_netif_struct;
 static struct netif *srv_netif = NULL;   /* written on the tcpip thread only */
 static bool platform_ready = false;
@@ -142,6 +144,9 @@ static esp_err_t add_peer_cb(void *ctx)
     /* No endpoint: it is learned from the peer's first authenticated packet */
     peer.endport_port = 0;
     peer.keep_alive = cfg->keepalive;
+    if (cfg->greatest_timestamp != NULL) {
+        memcpy(peer.greatest_timestamp, cfg->greatest_timestamp, sizeof(peer.greatest_timestamp));
+    }
 
     switch (wireguardif_add_peer(srv_netif, &peer, &index)) {
         case ERR_OK:  ret = ESP_OK; break;
@@ -209,6 +214,7 @@ static esp_err_t peer_stats_cb(void *ctx)
             : UINT32_MAX;
     s->rx_bytes = peer->rx_bytes;
     s->tx_bytes = peer->tx_bytes;
+    memcpy(s->greatest_timestamp, peer->greatest_timestamp, sizeof(s->greatest_timestamp));
     return ESP_OK;
 }
 

@@ -39,7 +39,11 @@ static const char* acl_names[MAX_ACL_LISTS] = {
     "to_esp",    /* 0: Internet -> ESP32 (uplink input) */
     "from_esp",  /* 1: ESP32 -> Internet (uplink output) */
     "to_ap",     /* 2: Clients -> ESP32 (AP input) */
-    "from_ap"    /* 3: ESP32 -> Clients (AP output) */
+    "from_ap",   /* 3: ESP32 -> Clients (AP output) */
+#if CONFIG_WG_SERVER
+    "to_wg",     /* 4: VPN clients -> ESP32 (tunnel input) */
+    "from_wg"    /* 5: ESP32 -> VPN clients (tunnel output) */
+#endif
 };
 
 /* ACL list description for display */
@@ -47,7 +51,11 @@ static const char* acl_desc[MAX_ACL_LISTS] = {
     "Internet -> ESP (to_esp)",
     "ESP -> Internet (from_esp)",
     "Clients -> ESP (to_ap)",
-    "ESP -> Clients (from_ap)"
+    "ESP -> Clients (from_ap)",
+#if CONFIG_WG_SERVER
+    "VPN clients -> ESP (to_wg)",
+    "ESP -> VPN clients (from_wg)"
+#endif
 };
 
 /* ACL rule tables - one array per direction */
@@ -235,7 +243,19 @@ bool acl_delete(uint8_t acl_no, uint8_t rule_idx)
 #define ETH_TYPE_ARP   0x0806
 #define ETH_TYPE_IPV6  0x86DD
 
+static uint8_t acl_check(uint8_t acl_no, struct pbuf *p, bool bare_ip);
+
 IRAM_ATTR uint8_t acl_check_packet(uint8_t acl_no, struct pbuf *p)
+{
+    return acl_check(acl_no, p, false);
+}
+
+IRAM_ATTR uint8_t acl_check_ip_packet(uint8_t acl_no, struct pbuf *p)
+{
+    return acl_check(acl_no, p, true);
+}
+
+static IRAM_ATTR uint8_t acl_check(uint8_t acl_no, struct pbuf *p, bool bare_ip)
 {
     if (acl_no >= MAX_ACL_LISTS || p == NULL) {
         return ACL_NO_MATCH;
@@ -248,7 +268,7 @@ IRAM_ATTR uint8_t acl_check_packet(uint8_t acl_no, struct pbuf *p)
     /* Check if packet has Ethernet header by examining structure.
      * ESP-IDF WiFi passes full Ethernet frames to netif->input.
      * Ethernet header: 6 bytes dst MAC + 6 bytes src MAC + 2 bytes EtherType */
-    if (payload_len >= ETH_HEADER_LEN) {
+    if (!bare_ip && payload_len >= ETH_HEADER_LEN) {
         uint16_t ethertype = (payload[12] << 8) | payload[13];
 
         /* Check for common EtherTypes indicating this is an Ethernet frame */
