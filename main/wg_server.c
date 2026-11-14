@@ -484,7 +484,11 @@ esp_err_t wgs_regenerate_key(void)
 esp_err_t wgs_set_enabled(bool enabled)
 {
     if (enabled) {
-        if (vpn_enabled) {
+        /* Check the saved setting, not the running state: after
+         * "set_vpn -e 0" the client still runs until the restart that
+         * also starts the server. */
+        int vpn_saved = 0;
+        if (get_config_param_int("vpn_enabled", &vpn_saved) == ESP_OK && vpn_saved) {
             return ESP_ERR_INVALID_STATE;
         }
         if (wgs_pubkey[0] == '\0') {
