@@ -84,7 +84,7 @@ menu "WireGuard Server"
             Lets remote WireGuard clients connect to the router and reach the
             AP network (routed) and the uplink network and internet (NAT).
             Mutually exclusive with the WireGuard client uplink at runtime.
-            Enabled for the ESP32-S3 and WT32-ETH01 variants only; it raises
+            Enabled for the ESP32 and ESP32-S3 variants (not C3/C5/C6); it raises
             WIREGUARD_MAX_PEERS to 8 (about 1 KB RAM per peer slot while a
             WireGuard interface exists).
 

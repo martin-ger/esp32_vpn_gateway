@@ -1,6 +1,6 @@
 # ESP32 NAT Router
 
-This is a firmware to use the ESP32 as WiFi NAT router. It routes between the network of the AP interface and the STA or ETH interface as uplink network. It can also work as a VPN router using WireGuard as uplink, and on the ESP32-S3 and WT32-ETH01 as a WireGuard server for remote clients.
+This is a firmware to use the ESP32 as WiFi NAT router. It routes between the network of the AP interface and the STA or ETH interface as uplink network. It can also work as a VPN router using WireGuard as uplink, and (except on the ESP32-C3/C5/C6) as a WireGuard server for remote clients.
 
 ## Other WiFi Router/Repeater Projects
 Starting from this code base I started several spin-off projects with slightly differrent scope. These are all (ab)using the ESP as a minimal network device. 
@@ -15,7 +15,7 @@ Starting from this code base I started several spin-off projects with slightly d
 - Simple range extender for an existing WiFi network
 - An additional WiFi network with different SSID/password and restricted access for guests or IoT devices
 - VPN-Router using WireGuard
-- WireGuard server for inbound VPN clients (ESP32-S3, WT32-ETH01)
+- WireGuard server for inbound VPN clients (not on C3/C5/C6)
 - Converter from a corporate (WPA2-Enterprise) network to a regular (WPA-PSK) network for simple devices
 - Classic WiFi router with Ethernet uplink
 - MCP-server to control your network using agentic AI
@@ -26,7 +26,7 @@ Starting from this code base I started several spin-off projects with slightly d
 
 - **NAT Routing**: Full WiFi NAT router with IP forwarding (15+ Mbps throughput)
 - **WireGuard VPN**: Optional VPN tunnel for upstream traffic with automatic MSS clamping and Path MTU
-- **WireGuard Server** (ESP32-S3, WT32-ETH01): Let up to 8 clients connect in to the AP network and the internet, with client configs and QR codes generated on the device
+- **WireGuard Server** (not on C3/C5/C6): Let up to 8 clients connect in to the AP network and the internet, with client configs and QR codes generated on the device
 - **DHCP Reservations**: Assign fixed IPs to specific MAC addresses
 - **Port Forwarding**: Map external ports to internal devices
 - **Firewall**: Define ACL to restrict or monitor traffic
@@ -96,7 +96,7 @@ Full documentation is available in the [Wiki](https://github.com/martin-ger/esp3
 | [Firewall](https://github.com/martin-ger/esp32_nat_router/wiki/Firewall) | ACL packet filtering rules and configuration |
 | [Packet Capture](https://github.com/martin-ger/esp32_nat_router/wiki/Packet-Capture) | PCAP streaming to Wireshark |
 | [WireGuard VPN](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-VPN) | VPN tunnel configuration and server setup |
-| [WireGuard Server](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-Server) | Inbound VPN server for remote clients (ESP32-S3, WT32-ETH01) |
+| [WireGuard Server](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-Server) | Inbound VPN server for remote clients (not on C3/C5/C6) |
 | [Remote Console](https://github.com/martin-ger/esp32_nat_router/wiki/Remote-Console) | Network-accessible CLI via TCP |
 | [Security](https://github.com/martin-ger/esp32_nat_router/wiki/Security) | Hardening guide: interface binding, VPN, ACL, credential handling |
 | [MQTT Home Assistant](https://github.com/martin-ger/esp32_nat_router/wiki/MQTT-Home-Assistant) | MQTT telemetry with HA auto-discovery |

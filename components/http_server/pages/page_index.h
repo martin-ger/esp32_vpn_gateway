@@ -181,7 +181,7 @@ font-size: 0.8rem;\
 </table>\
 </div>"
 
-/* WireGuard server builds (S3 / WT32-ETH01): link to the server page, the
+/* WireGuard server builds (ESP32 / ESP32-S3 chips): link to the server page, the
  * client page is named "VPN Client", and the WiFi Scan button is dropped to
  * keep the button row short (the scan stays reachable from Getting Started). */
 #if CONFIG_WG_SERVER

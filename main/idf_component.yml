@@ -5,7 +5,7 @@ dependencies:
     rules:
       - if: "idf_target != \"esp32c5\""
   # QR code for WireGuard server client configs (only the chips that have a
-  # server variant: esp32s3 and esp32 for the WT32-ETH01)
+  # server: esp32s3, and esp32 for the WiFi, WT32-ETH01 and POE-ISO builds)
   espressif/qrcode:
     version: '*'
     rules:

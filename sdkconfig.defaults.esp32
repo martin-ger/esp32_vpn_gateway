@@ -1,0 +1,10 @@
+# ESP32 (classic) chip overrides. ESP-IDF applies this file automatically on
+# top of sdkconfig.defaults for every build with IDF_TARGET=esp32, i.e. the
+# esp32 WiFi variant and both Ethernet boards (WT32-ETH01, ESP32-POE-ISO).
+
+# WireGuard server (inbound VPN); also raises WIREGUARD_MAX_PEERS to 8
+CONFIG_WG_SERVER=y
+
+# Stack canaries: the WireGuard server faces the internet, so a stack
+# overflow should crash instead of being exploitable
+CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y

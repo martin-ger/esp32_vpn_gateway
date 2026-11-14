@@ -5,5 +5,4 @@
 CONFIG_ETH_PHY_ADDR=1
 CONFIG_ETH_PHY_POWER_GPIO=16
 
-# WireGuard server (inbound VPN); also raises WIREGUARD_MAX_PEERS to 8
-CONFIG_WG_SERVER=y
+# WireGuard server and stack canaries come from sdkconfig.defaults.esp32

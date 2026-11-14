@@ -6,3 +6,7 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # WireGuard server (inbound VPN); also raises WIREGUARD_MAX_PEERS to 8
 CONFIG_WG_SERVER=y
+
+# Stack canaries: the WireGuard server faces the internet, so a stack
+# overflow should crash instead of being exploitable
+CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y

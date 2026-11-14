@@ -1,6 +1,7 @@
 /* WireGuard server (inbound VPN) settings, peer table and runtime control.
  *
- * Only built when CONFIG_WG_SERVER is set (ESP32-S3 and WT32-ETH01).
+ * Only built when CONFIG_WG_SERVER is set (ESP32 and ESP32-S3 variants,
+ * not C3/C5/C6).
  * The server and the WireGuard client uplink (vpn_config.h) are mutually
  * exclusive: the server does not start while vpn_enabled is set.
  *

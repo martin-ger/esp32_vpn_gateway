@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ESP-IDF (5.5.x) firmware that turns an ESP32 into a WiFi NAT router: AP interface downstream, WiFi STA or Ethernet (LAN8720) upstream, optional WireGuard uplink, and (ESP32-S3 and WT32-ETH01 only) an optional WireGuard server for inbound VPN clients. Configured via web UI, serial console, remote TCP console, and an MCP bridge. User docs live in the GitHub wiki; a local copy is in `wiki/` (untracked here, published separately).
+ESP-IDF (5.5.x) firmware that turns an ESP32 into a WiFi NAT router: AP interface downstream, WiFi STA or Ethernet (LAN8720) upstream, optional WireGuard uplink, and (all ESP32 and ESP32-S3 variants, not C3/C5/C6) an optional WireGuard server for inbound VPN clients. Configured via web UI, serial console, remote TCP console, and an MCP bridge. User docs live in the GitHub wiki; a local copy is in `wiki/` (untracked here, published separately).
 
 ## Build
 
@@ -51,7 +51,7 @@ idf.py -B build_eth -D SDKCONFIG=sdkconfig.eth \
 - Per-chip differences use `CONFIG_IDF_TARGET_*` (e.g. 5 GHz band selection only on C5, mDNS not on C5).
 
 ### WireGuard server (`CONFIG_WG_SERVER`)
-- Enabled only in `sdkconfig.defaults.esp32s3` and `sdkconfig.defaults.wt32_eth01`; other variants compile none of it. Everything server-specific is behind `#if CONFIG_WG_SERVER`, and the option raises `WIREGUARD_MAX_PEERS` to 8.
+- Enabled in `sdkconfig.defaults.esp32s3` and `sdkconfig.defaults.esp32` (IDF applies the latter to every chip-esp32 build: esp32, wt32_eth01, esp32_poe_iso), together with stack canaries; the C3/C5/C6 variants compile none of it. Everything server-specific is behind `#if CONFIG_WG_SERVER`, and the option raises `WIREGUARD_MAX_PEERS` to 8.
 - Mutually exclusive with the WireGuard client at runtime: the server does not start while `vpn_enabled` is set.
 - `main/wg_server.c` owns the `wgs_*` NVS keys and the peer table (blob `wgs_peers`, which includes the optional per-peer preshared keys and is therefore excluded from plain-text exports; timestamps in `wgs_ts`); console command `wg_server` in `cmd_router.c`; web page `/wgserver` with `POST /api/wgserver` in `http_server.c`. Settings other than peers and the public host need a restart.
 - All lwIP work goes through `esp_wireguard_server_*`, which runs on the tcpip thread; call it from any task except that one.
