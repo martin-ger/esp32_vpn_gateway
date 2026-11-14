@@ -90,6 +90,7 @@ static SemaphoreHandle_t lock;
 static wgs_peer_cfg_t *peers;       /* WGS_MAX_PEERS entries, allocated on first use */
 static uint8_t (*peer_ts)[TS_LEN];  /* newest handshake timestamp per peer, same index as peers */
 static int peer_count;
+static bool peers_loaded;           /* NVS peer table read; done on first use, see ensure_peers() */
 static esp_timer_handle_t ts_timer;
 
 static bool alloc_tables(void)
@@ -229,6 +230,7 @@ static void load_peers(void)
     if (nvs_open(PARAM_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
         return;
     }
+    peers_loaded = true;
     if (nvs_get_blob(nvs, KEY_PEERS, NULL, &len) == ESP_OK && len > 0) {
         if (len % sizeof(wgs_peer_cfg_t) != 0 || len / sizeof(wgs_peer_cfg_t) > WGS_MAX_PEERS) {
             ESP_LOGW(TAG, "Ignoring peer table with unexpected size %u", (unsigned)len);
@@ -251,6 +253,15 @@ static void load_peers(void)
         }
     }
     nvs_close(nvs);
+}
+
+/* The peer table takes about 1 KB of heap, so a disabled server reads it only
+ * when something asks for the peers (console, web page). Call with the lock held. */
+static void ensure_peers(void)
+{
+    if (!peers_loaded) {
+        load_peers();
+    }
 }
 
 static int find_peer(const char *name)
@@ -389,7 +400,9 @@ void wgs_load_config(void)
         free(str);
     }
 
-    load_peers();
+    if (wgs_enabled) {
+        load_peers();
+    }
     derive_pubkey();
     if (wgs_enabled && wgs_pubkey[0] == '\0') {
         ESP_LOGW(TAG, "Enabled but no server key; run 'wg_server genkey'");
@@ -433,6 +446,7 @@ void wgs_start(void)
     };
 
     xSemaphoreTake(lock, portMAX_DELAY);
+    ensure_peers();
     esp_err_t err = esp_wireguard_server_start(&cfg);
     mbedtls_platform_zeroize(priv, sizeof(priv));
     if (err == ESP_OK) {
@@ -547,7 +561,14 @@ esp_err_t wgs_set_subnet(uint32_t ip, uint32_t mask)
     }
     /* Peer addresses are tied to the subnet; moving them silently would
      * break every client config already handed out. */
-    if (peer_count > 0) {
+    if (lock == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    ensure_peers();
+    int n = peer_count;
+    xSemaphoreGive(lock);
+    if (n > 0) {
         return ESP_ERR_INVALID_STATE;
     }
     esp_err_t err = set_config_param_str(KEY_IP, ip4str(ip, buf));
@@ -625,6 +646,7 @@ esp_err_t wgs_peer_add(const char *name, const char *pubkey, const char *psk, ui
     }
 
     xSemaphoreTake(lock, portMAX_DELAY);
+    ensure_peers();
     if (!alloc_tables() || peer_count >= WGS_MAX_PEERS) {
         err = ESP_ERR_NO_MEM;
         goto done;
@@ -693,6 +715,7 @@ esp_err_t wgs_peer_del(const char *name)
         return ESP_ERR_INVALID_ARG;
     }
     xSemaphoreTake(lock, portMAX_DELAY);
+    ensure_peers();
     int i = find_peer(name);
     if (i >= 0) {
         /* Cut the live session first: if the NVS write then fails the peer is
@@ -720,6 +743,7 @@ int wgs_peer_list(wgs_peer_info_t *out, int max)
         return 0;
     }
     xSemaphoreTake(lock, portMAX_DELAY);
+    ensure_peers();
     for (; n < peer_count && n < max; n++) {
         memset(&out[n], 0, sizeof(out[n]));
         out[n].cfg = peers[n];
