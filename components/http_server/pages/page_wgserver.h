@@ -18,7 +18,10 @@ table { width: 100%; border-collapse: collapse; }\
 td, th { padding: 0.45rem 0.4rem; vertical-align: top; text-align: left; font-size: 0.9rem; }\
 th { color: #888; font-weight: 500; border-bottom: 1px solid rgba(0, 217, 255, 0.2); }\
 .f td:first-child { color: #888; width: 35%; text-align: right; padding-right: 0.75rem; }\
-.p td { border-bottom: 1px solid rgba(255, 255, 255, 0.05); word-break: break-all; }\
+.p td { border-bottom: 1px solid rgba(255, 255, 255, 0.05); white-space: nowrap; }\
+.p th { white-space: nowrap; }\
+.p td small { font-size: 0.75rem; }\
+.tw { overflow-x: auto; }\
 input[type='text'], input[type='number'], select { width: 100%; background: rgba(22, 33, 62, 0.6); border: 1px solid rgba(0, 217, 255, 0.2); border-radius: 8px; color: #e0e0e0; padding: 0.6rem; font-size: 0.9rem; }\
 select option { background: #16213e; color: #e0e0e0; }\
 input::placeholder { color: #666; }\

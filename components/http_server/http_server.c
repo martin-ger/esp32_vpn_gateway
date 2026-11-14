@@ -3926,12 +3926,12 @@ static esp_err_t wgserver_get_handler(httpd_req_t *req)
     /* Clients */
     int n = wgs_peer_list(list, WGS_MAX_PEERS);
     snprintf(row, sizeof(row),
-        "<h2>Clients (%d/%d)</h2><table class='p'>"
-        "<tr><th>Name</th><th>Tunnel IP</th><th>State</th><th>Endpoint</th><th>Handshake</th><th>RX / TX</th><th>PSK</th><th></th></tr>",
+        "<h2>Clients (%d/%d)</h2><div class='tw'><table class='p'>"
+        "<tr><th>Client</th><th>State</th><th>Endpoint</th><th>Traffic</th><th>PSK</th><th></th></tr>",
         n, WGS_MAX_PEERS);
     SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
     for (int i = 0; i < n; i++) {
-        char tip[16], ep[24] = "-", hs[24] = "-", rx[16], tx[16];
+        char tip[16], ep[24] = "-", hs[24] = "no handshake", rx[16], tx[16];
         a.addr = list[i].cfg.ip;
         esp_ip4addr_ntoa(&a, tip, sizeof(tip));
         if (list[i].endpoint_ip != 0) {
@@ -3945,17 +3945,19 @@ static esp_err_t wgserver_get_handler(httpd_req_t *req)
         wgs_fmt_bytes(list[i].tx_bytes, tx, sizeof(tx));
         /* Names are restricted to letters, digits, '-', '_' when stored */
         snprintf(row, sizeof(row),
-            "<tr><td>%.15s</td><td>%s</td><td style='color:%s;'>%s</td><td>%s</td><td>%s</td><td>%s / %s</td><td>%s</td>"
-            "<td><button class='sb' onclick='pc(\"%.15s\")'>Config</button>"
+            "<tr><td>%.15s<small>%s</small></td>"
+            "<td><span style='color:%s;'>%s</span><small>%s</small></td>"
+            "<td>%s</td><td>RX %s<br>TX %s</td><td>%s</td>"
+            "<td><button class='sb' onclick='pc(\"%.15s\")'>Config</button><br>"
             "<button class='sb d' onclick='pd(\"%.15s\")'>Delete</button></td></tr>",
-            list[i].cfg.name, tip, list[i].up ? "#4caf50" : "#888", list[i].up ? "up" : "down",
-            ep, hs, rx, tx, list[i].cfg.psk[0] ? "yes" : "no", list[i].cfg.name, list[i].cfg.name);
+            list[i].cfg.name, tip, list[i].up ? "#4caf50" : "#888", list[i].up ? "up" : "down", hs,
+            ep, rx, tx, list[i].cfg.psk[0] ? "yes" : "no", list[i].cfg.name, list[i].cfg.name);
         SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
     }
     if (n == 0) {
-        SEND_CHUNK(req, "<tr><td colspan='8' style='color:#888;'>No clients yet</td></tr>", HTTPD_RESP_USE_STRLEN);
+        SEND_CHUNK(req, "<tr><td colspan='6' style='color:#888;'>No clients yet</td></tr>", HTTPD_RESP_USE_STRLEN);
     }
-    SEND_CHUNK(req, "</table>", HTTPD_RESP_USE_STRLEN);
+    SEND_CHUNK(req, "</table></div>", HTTPD_RESP_USE_STRLEN);
 
     SEND_CHUNK(req, WGS_CHUNK_ADD, HTTPD_RESP_USE_STRLEN);
     SEND_CHUNK(req, NULL, 0);
