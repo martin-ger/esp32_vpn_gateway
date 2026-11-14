@@ -1483,6 +1483,43 @@ static esp_err_t route_snapshot_cb(void *ctx)
 }
 
 /* 'show' command implementation */
+/* The driver allows one installed temperature sensor at a time, so the console
+ * and the MQTT integration share this handle. It is installed on first use and
+ * stays enabled. */
+bool cpu_temperature_get(float *celsius)
+{
+#if SOC_TEMP_SENSOR_SUPPORTED
+    static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+    static bool claimed = false;
+    static temperature_sensor_handle_t tsens = NULL;
+
+    if (tsens == NULL) {
+        bool mine;
+        taskENTER_CRITICAL(&mux);
+        mine = !claimed;
+        claimed = true;
+        taskEXIT_CRITICAL(&mux);
+        if (!mine) {
+            return false;   /* another task is installing it, or install failed */
+        }
+        temperature_sensor_handle_t h;
+        temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
+        if (temperature_sensor_install(&cfg, &h) != ESP_OK) {
+            return false;
+        }
+        if (temperature_sensor_enable(h) != ESP_OK) {
+            temperature_sensor_uninstall(h);
+            return false;
+        }
+        tsens = h;
+    }
+    return temperature_sensor_get_celsius(tsens, celsius) == ESP_OK;
+#else
+    (void)celsius;
+    return false;
+#endif
+}
+
 static int show(int argc, char **argv)
 {
     int nerrors = arg_parse(argc, argv, (void **) &show_args);
@@ -1565,23 +1602,13 @@ static int show(int argc, char **argv)
         printf("Bytes sent/received: %s / %s\n", _sent_buf, _recv_buf);
 
 
-#if SOC_TEMP_SENSOR_SUPPORTED
         // CPU temperature
         {
-            temperature_sensor_handle_t tsens;
-            temperature_sensor_config_t tsens_cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
-            //temperature_sensor_config_t tsens_cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
-            if (temperature_sensor_install(&tsens_cfg, &tsens) == ESP_OK) {
-                float celsius = 0.0f;
-                temperature_sensor_enable(tsens);
-                if (temperature_sensor_get_celsius(tsens, &celsius) == ESP_OK) {
-                    printf("CPU temperature: %.1f °C\n", celsius);
-                }
-                temperature_sensor_disable(tsens);
-                temperature_sensor_uninstall(tsens);
+            float celsius;
+            if (cpu_temperature_get(&celsius)) {
+                printf("CPU temperature: %.1f °C\n", celsius);
             }
         }
-#endif
         // Free heap
         printf("Free heap: %lu bytes\n", (unsigned long)esp_get_free_heap_size());
 

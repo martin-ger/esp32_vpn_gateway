@@ -31,6 +31,11 @@
 #include "dhcp_reservations.h"
 #include "wifi_config.h"
 #include "remote_console.h"
+#include "vpn_config.h"
+#include "soc/soc_caps.h"
+#ifdef CONFIG_WG_SERVER
+#include "wg_server.h"
+#endif
 
 static const char *TAG = "mqtt_ha";
 
@@ -90,10 +95,53 @@ static void build_device_id(void)
              "esp32_nat_router_%s", s_mac_str);
 }
 
+/* Copy a string for use inside a JSON string literal: escapes '"' and '\\',
+ * writes control characters as \u00XX. If out is too small the result is
+ * cut at a whole character (never inside an escape or a UTF-8 sequence).
+ * Two bytes per input byte are enough unless the input has control chars. */
+static void json_escape(const char *in, char *out, size_t len)
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t o = 0;
+
+    if (len == 0) return;
+    for (; *in; in++) {
+        unsigned char c = (unsigned char)*in;
+        size_t need = (c == '"' || c == '\\') ? 2 : (c < 0x20) ? 6 : 1;
+        if (o + need >= len) {
+            /* drop a multi-byte UTF-8 character that was only partly copied */
+            size_t k = o;
+            while (k > 0 && ((unsigned char)out[k - 1] & 0xC0) == 0x80) k--;
+            if (k > 0 && ((unsigned char)out[k - 1] & 0xC0) == 0xC0) {
+                unsigned char lead = (unsigned char)out[k - 1];
+                size_t seq = (lead >= 0xF0) ? 4 : (lead >= 0xE0) ? 3 : 2;
+                if (o - (k - 1) < seq) o = k - 1;
+            }
+            break;
+        }
+        if (need == 2) {
+            out[o++] = '\\';
+            out[o++] = (char)c;
+        } else if (need == 6) {
+            out[o++] = '\\'; out[o++] = 'u'; out[o++] = '0'; out[o++] = '0';
+            out[o++] = hex[c >> 4];
+            out[o++] = hex[c & 0x0F];
+        } else {
+            out[o++] = (char)c;
+        }
+    }
+    out[o] = '\0';
+}
+
+/* Room for a 32-byte SSID or name with every byte escaped (2 bytes each) */
+#define JSON_NAME_MAX 72
+
 /* Shared device JSON fragment (embedded in every discovery payload). */
 static int device_json(char *buf, size_t len)
 {
     char ip_str[16];
+    char name[JSON_NAME_MAX];
+    json_escape(ap_ssid, name, sizeof(name));
     uint32_t cfg_ip = my_ip != 0 ? my_ip : my_ap_ip;
     snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR((esp_ip4_addr_t *)&cfg_ip));
     return snprintf(buf, len,
@@ -101,7 +149,7 @@ static int device_json(char *buf, size_t len)
         "\"name\":\"%s\","
         "\"sw\":\"%s\","
         "\"cu\":\"http://%s\"}",
-        s_device_id, ap_ssid,
+        s_device_id, name,
         esp_app_get_description()->version, ip_str);
 }
 
@@ -277,6 +325,55 @@ static void publish_discovery(void)
         "%s}", s_device_id, dev);
     esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
 
+    /* binary_sensor: VPN Status (WireGuard client uplink) */
+    snprintf(topic, sizeof(topic),
+        "homeassistant/binary_sensor/%s/vpn/config", s_device_id);
+    snprintf(payload, sizeof(payload),
+        "{\"name\":\"VPN Status\","
+        "\"uniq_id\":\"%s_vpn\","
+        "\"stat_t\":\"" TOPIC_STATE "\","
+        "\"val_tpl\":\"{{value_json.vpn}}\","
+        "\"dev_cla\":\"connectivity\","
+        "\"pl_on\":\"ON\",\"pl_off\":\"OFF\","
+        "\"ic\":\"mdi:vpn\","
+        "\"avty_t\":\"" TOPIC_AVAILABILITY "\","
+        "%s}", s_device_id, dev);
+    esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
+
+#ifdef CONFIG_WG_SERVER
+    /* sensor: VPN Clients (peers connected to the WireGuard server) */
+    snprintf(topic, sizeof(topic),
+        "homeassistant/sensor/%s/vpn_clients/config", s_device_id);
+    snprintf(payload, sizeof(payload),
+        "{\"name\":\"VPN Clients\","
+        "\"uniq_id\":\"%s_vpn_clients\","
+        "\"stat_t\":\"" TOPIC_STATE "\","
+        "\"val_tpl\":\"{{value_json.vpn_clients}}\","
+        "\"stat_cla\":\"measurement\","
+        "\"ic\":\"mdi:account-network\","
+        "\"avty_t\":\"" TOPIC_AVAILABILITY "\","
+        "%s}", s_device_id, dev);
+    esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
+#endif
+
+#if SOC_TEMP_SENSOR_SUPPORTED
+    /* sensor: CPU Temperature (not on the original ESP32) */
+    snprintf(topic, sizeof(topic),
+        "homeassistant/sensor/%s/cpu_temp/config", s_device_id);
+    snprintf(payload, sizeof(payload),
+        "{\"name\":\"CPU Temperature\","
+        "\"uniq_id\":\"%s_cpu_temp\","
+        "\"stat_t\":\"" TOPIC_STATE "\","
+        "\"val_tpl\":\"{{value_json.cpu_temp}}\","
+        "\"dev_cla\":\"temperature\","
+        "\"stat_cla\":\"measurement\","
+        "\"unit_of_meas\":\"\u00b0C\","
+        "\"entity_category\":\"diagnostic\","
+        "\"avty_t\":\"" TOPIC_AVAILABILITY "\","
+        "%s}", s_device_id, dev);
+    esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
+#endif
+
     /* button: Restart */
     snprintf(topic, sizeof(topic),
         "homeassistant/button/%s/restart/config", s_device_id);
@@ -345,7 +442,8 @@ static void publish_discovery(void)
                  r->mac[3], r->mac[4], r->mac[5]);
 
         /* Use reservation name if set, otherwise MAC */
-        const char *name = (r->name[0] != '\0') ? r->name : cmac;
+        char name[JSON_NAME_MAX];
+        json_escape((r->name[0] != '\0') ? r->name : cmac, name, sizeof(name));
         char client_state_topic[64];
         snprintf(client_state_topic, sizeof(client_state_topic),
                  TOPIC_CLIENTS "%s", cmac);
@@ -434,21 +532,23 @@ static void publish_state(void *arg)
     /* Get uplink info (RSSI + SSID) */
     wifi_ap_record_t ap_info;
     int8_t rssi = 0;
-    char uplink_ssid[33] = "";
+    char uplink_ssid[JSON_NAME_MAX] = "";
     if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
         rssi = ap_info.rssi;
-        strncpy(uplink_ssid, (const char *)ap_info.ssid, sizeof(uplink_ssid));
+        ap_info.ssid[sizeof(ap_info.ssid) - 1] = '\0';
+        json_escape((const char *)ap_info.ssid, uplink_ssid, sizeof(uplink_ssid));
     }
 
-    /* Router-level state */
-    char payload[384];
-    snprintf(payload, sizeof(payload),
+    /* Router-level state. Every key is always present so that no
+     * entity's value template hits a missing key. */
+    char payload[448];
+    int n = snprintf(payload, sizeof(payload),
         "{\"uplink\":\"%s\",\"clients\":%u,"
         "\"bytes_tx\":%" PRIu64 ",\"bytes_rx\":%" PRIu64 ","
         "\"free_heap\":%" PRIu32 ",\"uptime\":%" PRIu32 ","
         "\"rssi\":%d,\"ssid\":\"%s\","
         "\"web_ui\":\"%s\",\"remote_console\":\"%s\","
-        "\"ap_enabled\":\"%s\"}",
+        "\"ap_enabled\":\"%s\",\"vpn\":\"%s\"",
         ap_connect ? "ON" : "OFF",
         connect_count,
         get_sta_bytes_sent(),
@@ -458,8 +558,34 @@ static void publish_state(void *arg)
         rssi, uplink_ssid,
         is_web_ui_enabled() ? "ON" : "OFF",
         remote_console_is_enabled() ? "ON" : "OFF",
-        ap_disabled ? "OFF" : "ON");
-    esp_mqtt_client_publish(s_client, TOPIC_STATE, payload, 0, 0, 1);
+        ap_disabled ? "OFF" : "ON",
+        vpn_is_connected() ? "ON" : "OFF");
+#ifdef CONFIG_WG_SERVER
+    if (n > 0 && n < (int)sizeof(payload)) {
+        n += snprintf(payload + n, sizeof(payload) - n,
+                      ",\"vpn_clients\":%d", wgs_connected_count());
+    }
+#endif
+#if SOC_TEMP_SENSOR_SUPPORTED
+    if (n > 0 && n < (int)sizeof(payload)) {
+        float celsius;
+        /* null makes Home Assistant show the sensor as unknown */
+        if (cpu_temperature_get(&celsius)) {
+            n += snprintf(payload + n, sizeof(payload) - n,
+                          ",\"cpu_temp\":%.1f", celsius);
+        } else {
+            n += snprintf(payload + n, sizeof(payload) - n, ",\"cpu_temp\":null");
+        }
+    }
+#endif
+    if (n > 0 && n < (int)sizeof(payload)) {
+        n += snprintf(payload + n, sizeof(payload) - n, "}");
+    }
+    if (n > 0 && n < (int)sizeof(payload)) {
+        esp_mqtt_client_publish(s_client, TOPIC_STATE, payload, 0, 0, 1);
+    } else {
+        ESP_LOGW(TAG, "State payload too long, not published");
+    }
 
     /* Get AP station list for per-client RSSI */
     wifi_sta_list_t sta_list;

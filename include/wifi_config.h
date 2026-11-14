@@ -96,6 +96,9 @@ extern char wifi_country_code[3];
 // Dynamically enable or disable the AP interface (persists to NVS)
 void ap_set_enabled(bool enabled);
 
+// CPU temperature in °C; false on chips without a sensor (original ESP32)
+bool cpu_temperature_get(float *celsius);
+
 esp_err_t get_config_param_blob(char* name, uint8_t** blob, size_t blob_len);
 esp_err_t get_config_param_int(char* name, int* param);
 esp_err_t get_config_param_str(char* name, char** param);
