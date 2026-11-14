@@ -3887,10 +3887,19 @@ static esp_err_t wgserver_get_handler(httpd_req_t *req)
     snprintf(row, sizeof(row),
         "<h2>Status</h2><table class='f'>"
         "<tr><td>Server</td><td><strong style='color:%s;'>%s</strong></td></tr>"
-        "<tr><td>Public Key</td><td style='word-break:break-all;'>%s</td></tr>"
-        "</table>",
+        "<tr><td>Public Key</td><td style='word-break:break-all;'>%s</td></tr>",
         color, state, wgs_pubkey[0] ? wgs_pubkey : "not generated yet");
     SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+    uint32_t rej_unknown, rej_invalid;
+    if (wgs_rejected_counts(&rej_unknown, &rej_invalid)) {
+        snprintf(row, sizeof(row),
+            "<tr><td>Rejected Handshakes</td><td>%lu unknown peer, %lu invalid"
+            "<small>Unknown peer: a client whose key is not in the list below (e.g. a deleted client still retrying); "
+            "the log shows its key. Invalid: forged or corrupt handshakes.</small></td></tr>",
+            (unsigned long)rej_unknown, (unsigned long)rej_invalid);
+        SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+    }
+    SEND_CHUNK(req, "</table>", HTTPD_RESP_USE_STRLEN);
 
     /* Settings (wgs_host is restricted to letters, digits, '.', '-' when stored) */
     snprintf(row, sizeof(row),

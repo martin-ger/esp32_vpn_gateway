@@ -757,6 +757,18 @@ int wgs_connected_count(void)
     return up;
 }
 
+bool wgs_rejected_counts(uint32_t *unknown_peer, uint32_t *invalid)
+{
+    esp_wireguard_server_stats_t st;
+
+    if (!esp_wireguard_server_is_running() || esp_wireguard_server_get_stats(&st) != ESP_OK) {
+        return false;
+    }
+    *unknown_peer = st.rejected_unknown_peer;
+    *invalid = st.rejected_invalid;
+    return true;
+}
+
 int wgs_client_config(const wgs_peer_cfg_t *peer, const char *privkey,
                       bool full_tunnel, char *buf, size_t len)
 {

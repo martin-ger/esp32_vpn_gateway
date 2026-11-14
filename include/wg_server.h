@@ -106,6 +106,10 @@ int wgs_peer_list(wgs_peer_info_t *out, int max);
 /* Number of peers with a live session; 0 if the server is not running. */
 int wgs_connected_count(void);
 
+/* Handshakes rejected since the server started: from keys that are not a
+ * configured peer, and forged or corrupt ones. False if not running. */
+bool wgs_rejected_counts(uint32_t *unknown_peer, uint32_t *invalid);
+
 /* Write a client configuration for the peer into buf. privkey may be NULL or
  * "" (a placeholder is written). The peer's preshared key, if it has one, is
  * included. Returns the length, or -1 if it did not fit. */

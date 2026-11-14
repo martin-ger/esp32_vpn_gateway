@@ -4092,6 +4092,11 @@ static int wg_server_status(void)
     } else {
         printf("Public Host: <not set> (configs use " IPSTR ")\n", IP2STR(&up));
     }
+    uint32_t rej_unknown, rej_invalid;
+    if (wgs_rejected_counts(&rej_unknown, &rej_invalid)) {
+        printf("Rejected Handshakes: %lu unknown peer, %lu invalid\n",
+               (unsigned long)rej_unknown, (unsigned long)rej_invalid);
+    }
 
     wgs_peer_info_t *list = malloc(WGS_MAX_PEERS * sizeof(wgs_peer_info_t));
     if (list == NULL) {
