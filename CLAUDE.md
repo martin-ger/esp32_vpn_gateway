@@ -56,6 +56,7 @@ idf.py -B build_eth -D SDKCONFIG=sdkconfig.eth \
 - `main/wg_server.c` owns the `wgs_*` NVS keys and the peer table (blob `wgs_peers`, which includes the optional per-peer preshared keys and is therefore excluded from plain-text exports; timestamps in `wgs_ts`); console command `wg_server` in `cmd_router.c`; web page `/wgserver` with `POST /api/wgserver` in `http_server.c`. Settings other than peers and the public host need a restart.
 - All lwIP work goes through `esp_wireguard_server_*`, which runs on the tcpip thread; call it from any task except that one.
 - Routing relies on lwIP translating only when the *outgoing* netif has NAPT off: NAPT is on for the tunnel and the AP, so tunnel↔AP is routed and tunnel→uplink is masqueraded.
+- Client↔client traffic never reaches `ip4_forward()` (lwIP refuses to send a packet out of the netif it arrived on, and all clients share the tunnel netif): `wg_input_hook` in `netif_hooks.c` sends packets for another client's tunnel address straight back to `netif->output`, decrementing the TTL.
 - The tunnel netif carries bare IP packets (no Ethernet header). `netif_hooks.c` has separate hooks for it (`wg_netif_hooks_install`) that apply the `to_wg`/`from_wg` ACL lists via `acl_check_ip_packet()` and clamp MSS; don't reuse the Ethernet-frame helpers there.
 - Client private keys are shown once (console or web, incl. QR) and never stored or logged. The QR code uses `qrcodegen` from `espressif/qrcode` directly because that component's `esp_qrcode_generate()` logs the text it encodes.
 

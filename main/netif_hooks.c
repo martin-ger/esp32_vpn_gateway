@@ -686,7 +686,8 @@ void init_ap_netif_hooks(void) {
  * tunnel MTU in both directions (hosts behind the router assume 1500), and
  * feed the packet capture: promiscuous mode records all tunnel traffic,
  * ACL monitor mode the packets of to_wg/from_wg rules with the monitor flag.
- * Packets are recorded decrypted, with a synthetic Ethernet header. */
+ * Packets are recorded decrypted, with a synthetic Ethernet header.
+ * Traffic between two VPN clients is turned around in the input hook. */
 static netif_input_fn original_wg_input = NULL;
 static netif_output_fn original_wg_output = NULL;
 static uint16_t wg_mss_clamp = 0;
@@ -709,6 +710,41 @@ static IRAM_ATTR bool wg_acl_denies(uint8_t list, struct pbuf *p, bool to_router
     return false;
 }
 
+/* Client to client: all VPN clients share the tunnel netif, and lwIP never
+ * forwards a packet out of the interface it arrived on. A packet for another
+ * client's tunnel address is therefore sent back into the tunnel here, the
+ * way ip4_forward() would (TTL decremented, no NAPT). It has passed to_wg in
+ * the input hook and passes from_wg in wg_output_hook, so either list can
+ * restrict it. Returns true if the packet was consumed. */
+static IRAM_ATTR bool wg_forward_to_client(struct pbuf *p, struct netif *netif) {
+    if (p->len < IP_HLEN) return false;
+    struct ip_hdr *iphdr = (struct ip_hdr *)p->payload;
+    if (IPH_V(iphdr) != 4) return false;
+
+    ip4_addr_t dest;
+    ip4_addr_copy(dest, iphdr->dest);
+    const ip4_addr_t *own = netif_ip4_addr(netif);
+    if (ip4_addr_eq(&dest, own) || !ip4_addr_net_eq(&dest, own, netif_ip4_netmask(netif)) ||
+        ip4_addr_isbroadcast(&dest, netif) || ip4_addr_ismulticast(&dest)) {
+        return false;   /* for the router itself, or not a client address */
+    }
+
+    if (IPH_TTL(iphdr) > 1) {
+        IPH_TTL_SET(iphdr, IPH_TTL(iphdr) - 1);
+        /* Incremental IP checksum update, as in ip4_forward() */
+        if (IPH_CHKSUM(iphdr) >= PP_HTONS(0xffffU - 0x100)) {
+            IPH_CHKSUM_SET(iphdr, (u16_t)(IPH_CHKSUM(iphdr) + PP_HTONS(0x100) + 1));
+        } else {
+            IPH_CHKSUM_SET(iphdr, (u16_t)(IPH_CHKSUM(iphdr) + PP_HTONS(0x100)));
+        }
+        /* wg_output_hook; the WireGuard output picks the peer by its allowed
+         * IP and drops the packet if no client has this address */
+        netif->output(netif, p, &dest);
+    }
+    pbuf_free(p);   /* netif->output does not take ownership */
+    return true;
+}
+
 static IRAM_ATTR err_t wg_input_hook(struct pbuf *p, struct netif *netif) {
     bool monitored;
     if (wg_acl_denies(ACL_TO_WG, p, true, &monitored)) {
@@ -718,6 +754,9 @@ static IRAM_ATTR err_t wg_input_hook(struct pbuf *p, struct netif *netif) {
     clamp_tcp_mss_l2(p, wg_mss_clamp, 0);
     if (pcap_should_capture(monitored, true)) {
         pcap_capture_ip_packet(p, true);
+    }
+    if (wg_forward_to_client(p, netif)) {
+        return ERR_OK;
     }
     return original_wg_input(p, netif);
 }
