@@ -4,14 +4,16 @@ dependencies:
   esp_wireguard:
     git: https://github.com/martin-ger/esp_wireguard_idf_5.5.x.git
     version: v0.10.2
-  espressif/led_strip: '*'
+  # Registry components are pinned to exact versions so a build does not change
+  # with whatever is newest that day (dependencies.lock is not tracked).
+  espressif/led_strip: '3.1.1'
   espressif/mdns:
-    version: '*'
+    version: '1.15.1'
     rules:
-      - if: "idf_target != \"esp32c5\""
+      - if: "target != esp32c5"
   # QR code for WireGuard server client configs (only the chips that have a
   # server: esp32s3, and esp32 for the WiFi, WT32-ETH01 and POE-ISO builds)
   espressif/qrcode:
-    version: '*'
+    version: '0.2.0'
     rules:
       - if: "target in [esp32, esp32s3]"

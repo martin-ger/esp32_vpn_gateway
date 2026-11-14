@@ -9,7 +9,11 @@ if(NOT IDF_TARGET STREQUAL "esp32c5")
     list(APPEND main_priv_requires led_strip)
 endif()
 
-list(APPEND main_priv_requires espressif__mdns)
+# mDNS is not used on the ESP32-C5 (the component is not even fetched there,
+# see the rule in idf_component.yml)
+if(NOT IDF_TARGET STREQUAL "esp32c5")
+    list(APPEND main_priv_requires espressif__mdns)
+endif()
 
 # WireGuard server: only on the variants that enable CONFIG_WG_SERVER
 set(main_optional_srcs)
