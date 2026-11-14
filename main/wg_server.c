@@ -47,6 +47,7 @@ static const char *TAG = "wg_server";
 
 #define KEY_ENABLED  "wgs_enabled"
 #define KEY_PORT     "wgs_port"
+#define KEY_MTU      "wgs_mtu"
 #define KEY_IP       "wgs_ip"
 #define KEY_MASK     "wgs_mask"
 #define KEY_HOST     "wgs_host"
@@ -79,6 +80,7 @@ extern esp_netif_t *wifiAP;
 
 int32_t  wgs_enabled = 0;
 int32_t  wgs_port = WGS_PORT_DEFAULT;
+int32_t  wgs_mtu = WGS_MTU_DEFAULT;
 uint32_t wgs_ip = 0;
 uint32_t wgs_mask = 0;
 char     wgs_host[WGS_HOST_SIZE] = "";
@@ -364,6 +366,9 @@ void wgs_load_config(void)
     if (get_config_param_int(KEY_PORT, &val) == ESP_OK && val > 0 && val < 65536) {
         wgs_port = val;
     }
+    if (get_config_param_int(KEY_MTU, &val) == ESP_OK && val >= WGS_MTU_MIN && val <= WGS_MTU_MAX) {
+        wgs_mtu = val;
+    }
 
     ip4addr_aton(WGS_IP_DEFAULT, &addr);
     wgs_ip = addr.addr;
@@ -423,7 +428,7 @@ void wgs_start(void)
         .listen_port = (uint16_t)wgs_port,
         .address = wgs_ip,
         .netmask = wgs_mask,
-        .mtu = 0,
+        .mtu = (uint16_t)wgs_mtu,   /* the tunnel hooks clamp the MSS to MTU - 40 */
         .netif_key = UPLINK_NETIF_KEY,
     };
 
@@ -452,8 +457,8 @@ void wgs_start(void)
         ESP_LOGE(TAG, "Start failed: %s", esp_err_to_name(err));
         return;
     }
-    ESP_LOGI(TAG, "Listening on UDP %d, tunnel %s/%d, %d peer(s)",
-             (int)wgs_port, ip4str(wgs_ip, ipbuf), mask_prefix(wgs_mask), n);
+    ESP_LOGI(TAG, "Listening on UDP %d, tunnel %s/%d, MTU %d, %d peer(s)",
+             (int)wgs_port, ip4str(wgs_ip, ipbuf), mask_prefix(wgs_mask), (int)wgs_mtu, n);
 }
 
 static esp_err_t generate_server_key(void)
@@ -502,6 +507,18 @@ esp_err_t wgs_set_port(int port)
         return ESP_ERR_INVALID_ARG;
     }
     return set_config_param_int(KEY_PORT, port);
+}
+
+esp_err_t wgs_set_mtu(int mtu)
+{
+    if (mtu < WGS_MTU_MIN || mtu > WGS_MTU_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = set_config_param_int(KEY_MTU, mtu);
+    if (err == ESP_OK && !esp_wireguard_server_is_running()) {
+        wgs_mtu = mtu;
+    }
+    return err;
 }
 
 esp_err_t wgs_set_subnet(uint32_t ip, uint32_t mask)
@@ -748,9 +765,11 @@ int wgs_client_config(const wgs_peer_cfg_t *peer, const char *privkey,
     esp_netif_dns_info_t dns;
     int n;
 
-    n = snprintf(buf, len, "[Interface]\nPrivateKey = %s\nAddress = %s/32\n",
+    /* MTU: the same value on both ends, so neither sends packets the other
+     * side's tunnel (or the path between them) cannot take */
+    n = snprintf(buf, len, "[Interface]\nPrivateKey = %s\nAddress = %s/32\nMTU = %d\n",
                  (privkey && privkey[0]) ? privkey : "<client private key>",
-                 ip4str(peer->ip, a));
+                 ip4str(peer->ip, a), (int)wgs_mtu);
 
     /* The router does not answer DNS itself: hand out the server the AP
      * clients get, which is reached through the tunnel and the uplink NAT. */

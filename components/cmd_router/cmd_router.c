@@ -4038,6 +4038,8 @@ static void wg_server_usage(void)
     printf("  wg_server status                      - Show settings and peers\n");
     printf("  wg_server enable|disable              - Turn the server on/off (restart to apply)\n");
     printf("  wg_server port <port>                 - UDP listen port (restart to apply)\n");
+    printf("  wg_server mtu <%d-%d>               - Tunnel MTU, MSS clamp = MTU-40 (restart;\n", WGS_MTU_MIN, WGS_MTU_MAX);
+    printf("                                          re-export client configs)\n");
     printf("  wg_server subnet <ip> [netmask]       - Server tunnel address (restart to apply)\n");
     printf("  wg_server host <name|ip>              - Public address written into client configs\n");
     printf("  wg_server host -                      - Clear it (configs use the uplink address)\n");
@@ -4078,6 +4080,7 @@ static int wg_server_status(void)
         printf("Blocked: the WireGuard client uplink is enabled\n");
     }
     printf("Listen Port: %ld\n", (long)wgs_port);
+    printf("MTU: %ld (MSS clamp %ld)\n", (long)wgs_mtu, (long)wgs_mtu - 40);
     printf("Tunnel Address: " IPSTR "/%d\n", IP2STR(&ip), __builtin_popcount(wgs_mask));
     printf("Public Key: %s\n", wgs_pubkey[0] ? wgs_pubkey : "<not set>");
     if (wgs_host[0]) {
@@ -4306,6 +4309,14 @@ static int wg_server_cmd(int argc, char **argv)
             return 1;
         }
         printf("Listen port saved. Restart to apply.\n");
+        return 0;
+    }
+    if (strcmp(action, "mtu") == 0 && argc == 3) {
+        if (wgs_set_mtu(atoi(argv[2])) != ESP_OK) {
+            printf("MTU must be %d-%d\n", WGS_MTU_MIN, WGS_MTU_MAX);
+            return 1;
+        }
+        printf("MTU saved. Restart to apply, then re-export the client configs (they carry the MTU).\n");
         return 0;
     }
     if (strcmp(action, "host") == 0 && argc == 3) {

@@ -3895,19 +3895,21 @@ static esp_err_t wgserver_get_handler(httpd_req_t *req)
     /* Settings (wgs_host is restricted to letters, digits, '.', '-' when stored) */
     snprintf(row, sizeof(row),
         "<h2>Settings</h2><table class='f'>"
-        "<tr><td>Enabled</td><td><select id='en'><option value='1' %s>Yes</option><option value='0' %s>No</option></select></td></tr>"
+        "<tr><td>Enabled</td><td><select id='en'><option value='1' %s>On</option><option value='0' %s>Off</option></select></td></tr>"
         "<tr><td>Listen Port</td><td><input type='number' id='po' value='%d' min='1' max='65535'/></td></tr>"
+        "<tr><td>MTU</td><td><input type='number' id='mt' value='%d' min='%d' max='%d'/>"
+        "<small>Tunnel MTU, also written into client configs. MSS clamp = MTU - 40. Lower it (e.g. 1280) if large transfers stall over mobile networks or PPPoE.</small></td></tr>"
         "<tr><td>Tunnel IP</td><td><input type='text' id='ip' value='%s'/></td></tr>"
         "<tr><td>Netmask</td><td><input type='text' id='ma' value='%s'/></td></tr>",
         wgs_enabled ? "selected" : "", wgs_enabled ? "" : "selected",
-        (int)wgs_port, ipbuf, maskbuf);
+        (int)wgs_port, (int)wgs_mtu, WGS_MTU_MIN, WGS_MTU_MAX, ipbuf, maskbuf);
     SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
     snprintf(row, sizeof(row),
         "<tr><td>Public Host</td><td><input type='text' id='ho' value='%s' maxlength='%d' placeholder='e.g. myhome.example.org'/>"
         "<small>Address clients dial (Endpoint). Forward UDP port %d on the upstream router to this device. "
         "If empty, client configs use the current uplink address.</small></td></tr>"
-        "<tr><td></td><td><button type='button' class='ok-button' onclick='save()'>Save</button>"
-        "<small>Changing Enabled, Port or Tunnel IP reboots the router. The tunnel subnet can only be changed while no clients exist.</small></td></tr>"
+        "<tr><td></td><td><button type='button' class='ok-button' onclick='save()'>Save &amp; Reboot</button>"
+        "<small>Reboots when Enabled, Port, MTU or Tunnel IP changed; a new Public Host applies without reboot. The tunnel subnet can only be changed while no clients exist.</small></td></tr>"
         "</table>",
         wgs_host, WGS_HOST_SIZE - 1, (int)wgs_port);
     SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
@@ -4045,6 +4047,12 @@ static esp_err_t wgs_api_settings(httpd_req_t *req, const char *body)
         }
         reboot = true;
     }
+    if (wgs_field(body, "mtu", val, sizeof(val)) && atoi(val) != wgs_mtu) {
+        if (wgs_set_mtu(atoi(val)) != ESP_OK) {
+            return wgs_reply(req, false, "MTU must be 1280-1420", false, NULL, false);
+        }
+        reboot = true;
+    }
     if (wgs_field(body, "ip", val, sizeof(val)) && wgs_field(body, "mask", mask_str, sizeof(mask_str))) {
         if (!ip4addr_aton(val, &ip) || !ip4addr_aton(mask_str, &mask)) {
             return wgs_reply(req, false, "Invalid tunnel IP or netmask", false, NULL, false);
@@ -4070,6 +4078,7 @@ static esp_err_t wgs_api_settings(httpd_req_t *req, const char *body)
         }
         reboot = true;
     }
+    /* The public host applies at once; everything else needs a restart */
     if (reboot) {
         esp_timer_start_once(restart_timer, 3000000);
         return wgs_reply(req, true, "Saved. Rebooting...", true, NULL, false);

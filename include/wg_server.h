@@ -28,6 +28,9 @@ extern "C" {
 #define WGS_PORT_DEFAULT   51820
 #define WGS_IP_DEFAULT     "10.8.0.1"
 #define WGS_MASK_DEFAULT   "255.255.255.0"
+#define WGS_MTU_MIN        1280
+#define WGS_MTU_MAX        1420
+#define WGS_MTU_DEFAULT    1420    /* WireGuard default; MSS clamp = MTU - 40 */
 #define WGS_CLIENT_CONF_SIZE 512   /* enough for wgs_client_config() output */
 
 /* Stored peer record. The array of these is the NVS blob "wgs_peers", so the
@@ -54,6 +57,7 @@ typedef struct {
 /* Settings (persisted in NVS, loaded by wgs_load_config) */
 extern int32_t  wgs_enabled;        /* "wgs_enabled" */
 extern int32_t  wgs_port;           /* "wgs_port"    */
+extern int32_t  wgs_mtu;            /* "wgs_mtu", tunnel MTU in use */
 extern uint32_t wgs_ip;             /* "wgs_ip",   network byte order */
 extern uint32_t wgs_mask;           /* "wgs_mask", network byte order */
 extern char     wgs_host[WGS_HOST_SIZE];    /* "wgs_host", public name for client configs */
@@ -76,6 +80,7 @@ void wg_netif_hooks_install(struct netif *wg);
 /* Settings changes; all take effect after a restart. */
 esp_err_t wgs_set_enabled(bool enabled);            /* generates the server key on first enable */
 esp_err_t wgs_set_port(int port);
+esp_err_t wgs_set_mtu(int mtu);                     /* WGS_MTU_MIN..WGS_MTU_MAX */
 esp_err_t wgs_set_subnet(uint32_t ip, uint32_t mask);   /* ESP_ERR_INVALID_STATE while peers exist */
 esp_err_t wgs_set_host(const char *host);
 esp_err_t wgs_regenerate_key(void);                 /* invalidates every exported client config */

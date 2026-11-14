@@ -52,7 +52,7 @@ var n=d.qrn,s=4,q=4,x=c.getContext('2d');c.width=c.height=(n+2*q)*s;x.fillStyle=
 for(var i=0;i<n*n;i++){if(parseInt(d.qr[i>>2],16)&(8>>(i&3)))x.fillRect((q+i%n)*s,(q+(i/n|0))*s,s,s);}\
 c.style.display='block';E('qh').style.display='block';}\
 function show(d,n){if(d.conf){E('conf').textContent=d.conf;E('cn').value=n;E('out').style.display='block';qr(d);}}\
-function save(){api('action=settings&enabled='+v('en')+'&port='+v('po')+'&ip='+v('ip')+'&mask='+v('ma')+'&host='+v('ho'),\
+function save(){api('action=settings&enabled='+v('en')+'&port='+v('po')+'&mtu='+v('mt')+'&ip='+v('ip')+'&mask='+v('ma')+'&host='+v('ho'),\
 function(d){if(d.reboot)setTimeout(function(){location.href='/';},10000);});}\
 function add(){var n=E('pn').value.trim();api('action=add&name='+v('pn')+'&pubkey='+v('pk')+'&pip='+v('pi')+'&split='+v('pt')+'&psk='+(v('pg')==2?v('ps'):v('pg')==1?'1':''),function(d){show(d,n);});}\
 function pc(n){api('action=conf&name='+n+'&split='+v('pt'),function(d){show(d,n);});}\
