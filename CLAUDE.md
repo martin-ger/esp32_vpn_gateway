@@ -41,8 +41,8 @@ idf.py -B build_eth -D SDKCONFIG=sdkconfig.eth \
   - `cmd_router` — almost all console commands, plus the NVS accessors `get/set_config_param_{str,int,blob}` (declared in `include/wifi_config.h`).
   - `cmd_system` — system commands (heap, tasks, restart, …).
   - `http_server` — web UI. Pages are C string macros in `pages/page_*.h`, streamed in chunks; handlers and `/api/*` endpoints (config export/import, VPN import, OTA upload) in `http_server.c`.
-  - `esp_wireguard` — **vendored** copy of `martin-ger/esp_wireguard_idf_5.5.x` (v0.9.2) with local changes: server API (`esp_wireguard_server.h`), per-peer counters, 256-packet replay window, handshake load detection/cookies. It is no longer a managed component; fixes go here.
   - `acl` (firewall), `pcap_capture` (ring buffer + TCP stream on port 19000), `remote_console` (TCP CLI, default 2323), `dhcpserver` (patched copy of the lwIP/IDF DHCP server), `mqtt_ha`, `oled_display`, `syslog`.
+- WireGuard comes from the managed component `esp_wireguard` (git dependency on `martin-ger/esp_wireguard_idf_5.5.x`, pinned to a tag in `main/idf_component.yml`; the same author maintains it). Library fixes go there and are released as a new tag, then the pin is bumped here; don't patch `managed_components/`. Its internals (`src/`) are private, so the router only uses `esp_wireguard.h` and `esp_wireguard_server.h`.
 - `include/` — shared headers across main and components (`router_config.h` has global tuning vars and `AP_MAX_CONNECTIONS`, which is 5 on C3/C5 and 8 elsewhere).
 - `esp_nat_bridge.py` — MCP server (fastmcp + telnetlib3) that drives the router through the remote console and **parses console output with regexes**. If you change the text of a console command's output, update the bridge too.
 
@@ -51,7 +51,7 @@ idf.py -B build_eth -D SDKCONFIG=sdkconfig.eth \
 - Per-chip differences use `CONFIG_IDF_TARGET_*` (e.g. 5 GHz band selection only on C5, mDNS not on C5).
 
 ### WireGuard server (`CONFIG_WG_SERVER`)
-- Enabled in `sdkconfig.defaults.esp32s3` and `sdkconfig.defaults.esp32` (IDF applies the latter to every chip-esp32 build: esp32, wt32_eth01, esp32_poe_iso), together with stack canaries; the C3/C5/C6 variants compile none of it. Everything server-specific is behind `#if CONFIG_WG_SERVER`, and the option raises `WIREGUARD_MAX_PEERS` to 8.
+- Enabled in `sdkconfig.defaults.esp32s3` and `sdkconfig.defaults.esp32` (IDF applies the latter to every chip-esp32 build: esp32, wt32_eth01, esp32_poe_iso), together with stack canaries; the C3/C5/C6 variants compile none of it. Everything server-specific is behind `#if CONFIG_WG_SERVER`; the option selects the library's `WIREGUARD_SERVER`, which raises `WIREGUARD_MAX_PEERS` to 8.
 - Mutually exclusive with the WireGuard client at runtime: the server does not start while `vpn_enabled` is set.
 - `main/wg_server.c` owns the `wgs_*` NVS keys and the peer table (blob `wgs_peers`, which includes the optional per-peer preshared keys and is therefore excluded from plain-text exports; timestamps in `wgs_ts`); console command `wg_server` in `cmd_router.c`; web page `/wgserver` with `POST /api/wgserver` in `http_server.c`. Settings other than peers and the public host need a restart.
 - All lwIP work goes through `esp_wireguard_server_*`, which runs on the tcpip thread; call it from any task except that one.

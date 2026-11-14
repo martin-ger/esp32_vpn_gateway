@@ -80,12 +80,14 @@ menu "WireGuard Server"
     config WG_SERVER
         bool "Enable WireGuard server (inbound VPN)"
         default n
+        select WIREGUARD_SERVER
         help
             Lets remote WireGuard clients connect to the router and reach the
             AP network (routed) and the uplink network and internet (NAT).
             Mutually exclusive with the WireGuard client uplink at runtime.
-            Enabled for the ESP32 and ESP32-S3 variants (not C3/C5/C6); it raises
-            WIREGUARD_MAX_PEERS to 8 (about 1 KB RAM per peer slot while a
+            Enabled for the ESP32 and ESP32-S3 variants (not C3/C5/C6). Selects the
+            server API of the esp_wireguard component (WIREGUARD_SERVER), which
+            raises WIREGUARD_MAX_PEERS to 8 (about 1 KB RAM per peer slot while a
             WireGuard interface exists).
 
 endmenu
