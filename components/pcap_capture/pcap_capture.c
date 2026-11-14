@@ -263,13 +263,15 @@ IRAM_ATTR bool pcap_should_capture(bool is_acl_monitored, bool is_ap_interface)
             // Capture ACL-monitored packets from any interface
             return is_acl_monitored;
         case PCAP_MODE_PROMISCUOUS:
-            // Capture all AP traffic, but not STA traffic
+            // Capture all client-side traffic (AP, WireGuard server tunnel), not the uplink
             return is_ap_interface;
     }
     return false;
 }
 
-IRAM_ATTR void pcap_capture_packet(struct pbuf *p)
+// Record prefix (a synthetic link header, may be empty) followed by the
+// packet as one frame. Snaplen applies to the whole frame.
+static IRAM_ATTR void capture_frame(const uint8_t *prefix, size_t prefix_len, struct pbuf *p)
 {
     if (p == NULL || !client_connected) {
         return;
@@ -279,36 +281,41 @@ IRAM_ATTR void pcap_capture_packet(struct pbuf *p)
     pcap_packet_header_t pkt_hdr;
     struct timeval tv;
     gettimeofday(&tv, NULL);
+    size_t frame_len = prefix_len + p->tot_len;
     pkt_hdr.ts_sec = (uint32_t)tv.tv_sec;
     pkt_hdr.ts_usec = (uint32_t)tv.tv_usec;
-    pkt_hdr.orig_len = p->tot_len;
-    pkt_hdr.incl_len = (p->tot_len > pcap_snaplen) ? pcap_snaplen : p->tot_len;
+    pkt_hdr.orig_len = frame_len;
+    pkt_hdr.incl_len = (frame_len > pcap_snaplen) ? pcap_snaplen : frame_len;
 
-    // Temporary buffer for packet data (header + payload)
-    // Using stack allocation with max size for performance
-    uint8_t pkt_buf[sizeof(pcap_packet_header_t) + PCAP_SNAPLEN_MAX];
-
-    // Copy header
-    memcpy(pkt_buf, &pkt_hdr, sizeof(pkt_hdr));
-
-    // Copy packet data (handles pbuf chains)
-    size_t copied = 0;
-    struct pbuf *q = p;
-    while (q != NULL && copied < pkt_hdr.incl_len) {
-        size_t to_copy = q->len;
-        if (copied + to_copy > pkt_hdr.incl_len) {
-            to_copy = pkt_hdr.incl_len - copied;
-        }
-        memcpy(pkt_buf + sizeof(pkt_hdr) + copied, q->payload, to_copy);
-        copied += to_copy;
-        q = q->next;
-    }
-
-    // Write to ring buffer (non-blocking)
-    size_t total_len = sizeof(pkt_hdr) + pkt_hdr.incl_len;
-    if (ringbuf_write(pkt_buf, total_len)) {
+    // Write header, link prefix and packet data straight into the ring
+    // buffer (non-blocking). No staging buffer: the tunnel hooks run on the
+    // tcpip thread, whose stack has no room for a full frame. Snaplen is at
+    // least 64, so the prefix always fits in incl_len.
+    if (ringbuf_write_record((const uint8_t *)&pkt_hdr, sizeof(pkt_hdr), prefix, prefix_len,
+                             p, pkt_hdr.incl_len - prefix_len)) {
         captured_packets++;
     }
+}
+
+IRAM_ATTR void pcap_capture_packet(struct pbuf *p)
+{
+    capture_frame(NULL, 0, p);
+}
+
+/* Synthetic Ethernet header for bare IPv4 packets (WireGuard server tunnel).
+ * Locally administered MACs: 02:77:67:00:00:01 is the router's tunnel end,
+ * 02:77:67:00:00:02 the VPN client side, so the direction is visible. */
+IRAM_ATTR void pcap_capture_ip_packet(struct pbuf *p, bool to_router)
+{
+    static const uint8_t mac_router[6] = { 0x02, 0x77, 0x67, 0x00, 0x00, 0x01 };
+    static const uint8_t mac_client[6] = { 0x02, 0x77, 0x67, 0x00, 0x00, 0x02 };
+    uint8_t eth[14];
+
+    memcpy(eth, to_router ? mac_router : mac_client, 6);       /* destination */
+    memcpy(eth + 6, to_router ? mac_client : mac_router, 6);   /* source */
+    eth[12] = 0x08;                                            /* IPv4 */
+    eth[13] = 0x00;
+    capture_frame(eth, sizeof(eth), p);
 }
 
 void pcap_set_mode(pcap_capture_mode_t mode)

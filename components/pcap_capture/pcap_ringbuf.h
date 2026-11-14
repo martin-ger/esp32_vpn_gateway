@@ -50,12 +50,18 @@ void ringbuf_free(void);
 void ringbuf_reset(void);
 
 /**
- * @brief Write data to ring buffer (non-blocking)
- * @param data Data to write
- * @param len Length of data
+ * @brief Write one capture record straight from its parts (non-blocking)
+ *
+ * Writes hdr, then prefix, then the first p_len bytes of the pbuf chain p as
+ * one contiguous record, or nothing if it does not fit. Avoids staging the
+ * packet in a stack buffer, which matters on the small tcpip thread stack.
+ *
  * @return true on success, false if buffer full or busy
  */
-bool ringbuf_write(const uint8_t *data, size_t len);
+struct pbuf;
+bool ringbuf_write_record(const uint8_t *hdr, size_t hdr_len,
+                          const uint8_t *prefix, size_t prefix_len,
+                          const struct pbuf *p, size_t p_len);
 
 /**
  * @brief Read data from ring buffer (blocking with timeout)

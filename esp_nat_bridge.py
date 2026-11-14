@@ -673,7 +673,8 @@ async def pcap_set_mode(mode: str) -> str:
     Modes:
       - off: Capture disabled (default).
       - acl: Only capture packets that match firewall rules marked with "monitor".
-      - promisc: Capture all traffic from hotspot clients.
+      - promisc: Capture all traffic from hotspot clients (and from WireGuard
+        server clients, on builds with the server).
 
     Args:
         mode: "off", "acl", or "promisc".

@@ -682,33 +682,55 @@ void init_ap_netif_hooks(void) {
  *
  * The tunnel netif has no link layer: input and output carry bare IP packets,
  * so it gets its own pair of hooks instead of the Ethernet-frame ones above.
- * They apply the to_wg/from_wg ACLs and clamp the MSS of TCP SYNs to the
- * tunnel MTU in both directions (hosts behind the router assume 1500).
- * The ACL monitor flag has no effect here: tunnel traffic is not captured. */
+ * They apply the to_wg/from_wg ACLs, clamp the MSS of TCP SYNs to the
+ * tunnel MTU in both directions (hosts behind the router assume 1500), and
+ * feed the packet capture: promiscuous mode records all tunnel traffic,
+ * ACL monitor mode the packets of to_wg/from_wg rules with the monitor flag.
+ * Packets are recorded decrypted, with a synthetic Ethernet header. */
 static netif_input_fn original_wg_input = NULL;
 static netif_output_fn original_wg_output = NULL;
 static uint16_t wg_mss_clamp = 0;
 
-static IRAM_ATTR bool wg_acl_denies(uint8_t list, struct pbuf *p) {
+/* Check a tunnel ACL. Returns true if the packet is denied; *monitored is set
+ * if the matching rule has the monitor flag. A denied, monitored packet is
+ * captured here, before it is dropped (as on the AP and uplink). */
+static IRAM_ATTR bool wg_acl_denies(uint8_t list, struct pbuf *p, bool to_router, bool *monitored) {
+    *monitored = false;
     if (acl_is_empty(list)) return false;
     uint8_t result = acl_check_ip_packet(list, p);
-    return result != ACL_NO_MATCH && (result & 0x01) == ACL_DENY;
+    if (result == ACL_NO_MATCH) return false;
+    *monitored = (result & ACL_MONITOR) != 0;
+    if ((result & 0x01) == ACL_DENY) {
+        if (*monitored && pcap_should_capture(true, true)) {
+            pcap_capture_ip_packet(p, to_router);
+        }
+        return true;
+    }
+    return false;
 }
 
 static IRAM_ATTR err_t wg_input_hook(struct pbuf *p, struct netif *netif) {
-    if (wg_acl_denies(ACL_TO_WG, p)) {
+    bool monitored;
+    if (wg_acl_denies(ACL_TO_WG, p, true, &monitored)) {
         pbuf_free(p);
         return ERR_OK;
     }
     clamp_tcp_mss_l2(p, wg_mss_clamp, 0);
+    if (pcap_should_capture(monitored, true)) {
+        pcap_capture_ip_packet(p, true);
+    }
     return original_wg_input(p, netif);
 }
 
 static IRAM_ATTR err_t wg_output_hook(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr) {
-    if (wg_acl_denies(ACL_FROM_WG, p)) {
+    bool monitored;
+    if (wg_acl_denies(ACL_FROM_WG, p, false, &monitored)) {
         return ERR_OK;  // dropped; the caller keeps ownership of p
     }
     clamp_tcp_mss_l2(p, wg_mss_clamp, 0);
+    if (pcap_should_capture(monitored, true)) {
+        pcap_capture_ip_packet(p, false);
+    }
     return original_wg_output(netif, p, ipaddr);
 }
 

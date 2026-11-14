@@ -9,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "lwip/pbuf.h"
 
 // Internal header for ring buffer
 #include "pcap_ringbuf.h"
@@ -89,7 +90,7 @@ bool ringbuf_alloc(size_t size)
 
 /* Releases the data buffer only.  The mutex and semaphore are created once by
  * ringbuf_init() and must outlive it: this runs on every client disconnect
- * while the packet hook may still be inside ringbuf_write(), and ringbuf_init()
+ * while the packet hook may still be inside ringbuf_write_record(), and ringbuf_init()
  * is not called again for the lifetime of the server task. */
 void ringbuf_free(void)
 {
@@ -127,7 +128,25 @@ void ringbuf_reset(void)
     xSemaphoreGive(ringbuf_mutex);
 }
 
-bool ringbuf_write(const uint8_t *data, size_t len)
+// Copy len bytes to the head, wrapping around. Caller holds the mutex and has
+// checked the free space.
+static void put_locked(const uint8_t *src, size_t len)
+{
+    size_t first_chunk = ringbuf_size - ringbuf_head;
+    if (first_chunk >= len) {
+        memcpy(ringbuf_data + ringbuf_head, src, len);
+        ringbuf_head = (ringbuf_head + len) % ringbuf_size;
+    } else {
+        memcpy(ringbuf_data + ringbuf_head, src, first_chunk);
+        memcpy(ringbuf_data, src + first_chunk, len - first_chunk);
+        ringbuf_head = len - first_chunk;
+    }
+    ringbuf_available += len;
+}
+
+bool ringbuf_write_record(const uint8_t *hdr, size_t hdr_len,
+                          const uint8_t *prefix, size_t prefix_len,
+                          const struct pbuf *p, size_t p_len)
 {
     if (ringbuf_data == NULL || ringbuf_mutex == NULL) {
         return false;
@@ -135,7 +154,6 @@ bool ringbuf_write(const uint8_t *data, size_t len)
 
     // Non-blocking take for ISR/hook context
     if (xSemaphoreTake(ringbuf_mutex, 0) != pdTRUE) {
-        // Mutex busy, drop packet
         dropped_packets++;
         return false;
     }
@@ -146,33 +164,27 @@ bool ringbuf_write(const uint8_t *data, size_t len)
         return false;
     }
 
-    size_t free_space = ringbuf_size - ringbuf_available;
-    if (len > free_space) {
-        // Not enough space, drop packet
+    size_t len = hdr_len + prefix_len + p_len;
+    if (len > ringbuf_size - ringbuf_available) {
         dropped_packets++;
         xSemaphoreGive(ringbuf_mutex);
         return false;
     }
 
-    // Write data, handling wrap-around
-    size_t first_chunk = ringbuf_size - ringbuf_head;
-    if (first_chunk >= len) {
-        // No wrap needed
-        memcpy(ringbuf_data + ringbuf_head, data, len);
-        ringbuf_head = (ringbuf_head + len) % ringbuf_size;
-    } else {
-        // Wrap around
-        memcpy(ringbuf_data + ringbuf_head, data, first_chunk);
-        memcpy(ringbuf_data, data + first_chunk, len - first_chunk);
-        ringbuf_head = len - first_chunk;
+    put_locked(hdr, hdr_len);
+    if (prefix_len > 0) {
+        put_locked(prefix, prefix_len);
+    }
+    for (const struct pbuf *q = p; q != NULL && p_len > 0; q = q->next) {
+        size_t n = (q->len < p_len) ? q->len : p_len;
+        put_locked((const uint8_t *)q->payload, n);
+        p_len -= n;
     }
 
-    ringbuf_available += len;
     xSemaphoreGive(ringbuf_mutex);
 
     // Signal data ready
     xSemaphoreGive(data_ready_sem);
-
     return true;
 }
 

@@ -38,10 +38,11 @@ void pcap_init(void);
  * - Current capture mode (OFF, ACL_MONITOR, or PROMISCUOUS)
  * - Whether a Wireshark client is connected
  * - Whether packet has ACL_MONITOR flag (for ACL_MONITOR mode)
- * - Interface type (promiscuous mode only captures AP interface)
+ * - Interface type (promiscuous mode only captures client-side interfaces)
  *
  * @param is_acl_monitored true if packet matched ACL rule with MONITOR flag
- * @param is_ap_interface true if packet is from AP interface (client traffic)
+ * @param is_ap_interface true for client-side traffic: the AP interface or the
+ *                        WireGuard server tunnel (not the uplink)
  * @return true if packet should be captured
  */
 bool pcap_should_capture(bool is_acl_monitored, bool is_ap_interface);
@@ -55,6 +56,18 @@ bool pcap_should_capture(bool is_acl_monitored, bool is_ap_interface);
  * @param p Packet buffer to capture
  */
 void pcap_capture_packet(struct pbuf *p);
+
+/**
+ * @brief Capture a bare IPv4 packet (no link header) into the ring buffer
+ *
+ * For the WireGuard server tunnel. A synthetic Ethernet header is put in
+ * front, since the capture stream is DLT_EN10MB. The MACs mark the direction:
+ * 02:77:67:00:00:01 is the router, 02:77:67:00:00:02 the VPN client side.
+ *
+ * @param p          Packet buffer starting with the IPv4 header
+ * @param to_router  true for packets arriving from the tunnel
+ */
+void pcap_capture_ip_packet(struct pbuf *p, bool to_router);
 
 /**
  * @brief Set capture mode

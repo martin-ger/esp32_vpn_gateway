@@ -2093,7 +2093,11 @@ static int pcap(int argc, char **argv)
         printf("  mode [off|acl|promisc] - Get or set capture mode\n");
         printf("    off      - Capture disabled\n");
         printf("    acl      - Capture ACL_MONITOR flagged packets (any interface)\n");
+#if CONFIG_WG_SERVER
+        printf("    promisc  - Capture all AP and VPN server client traffic (not STA)\n");
+#else
         printf("    promisc  - Capture all AP client traffic (not STA)\n");
+#endif
         printf("  status     - Show capture status\n");
         printf("  snaplen [n]- Get or set max capture bytes (64-1600)\n");
         printf("  start      - Legacy: enable promiscuous mode\n");
