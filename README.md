@@ -1,132 +1,228 @@
-# ESP32 NAT Router
+# ESP32 VPN Gateway
 
-This is a firmware to use the ESP32 as WiFi NAT router. It routes between the network of the AP interface and the STA or ETH interface as uplink network. It can also work as a VPN router using WireGuard as uplink, and (except on the ESP32-C3/C5/C6) as a WireGuard server for remote clients.
+The ESP32 VPN Gateway is a firmware that turns a 2 $ ESP32 into a small **WireGuard gateway**. It is built on the [ESP32 NAT Router](https://github.com/martin-ger/esp32_nat_router) and keeps all of its features, but adds VPN functions in every direction:
 
-## Other WiFi Router/Repeater Projects
-Starting from this code base I started several spin-off projects with slightly differrent scope. These are all (ab)using the ESP as a minimal network device. 
+- **VPN client (uplink)**: all traffic of the devices on the ESP32's WiFi access point goes through a WireGuard tunnel to a VPN provider or your own server.
+- **VPN server (inbound)**: phones and laptops connect *in* to the ESP32 with any WireGuard app and reach the AP network and the internet behind it.
+- **LAN gateway**: machines on the VPN reach hosts on the network the ESP32 is connected to, without touching that network's main router.
 
-- **Layer 2 WiFi Repeater**: Finally we have it - the **WiFi Repeater**, a layer 2 network bridge between STA and AP (no NAT, no DHCP, just plain frame forwarding in one broadcast domain, i.e. one IP network segment). You currently find it's sources in the [esp32_wifi_repeater](https://github.com/martin-ger/esp32_nat_router/tree/esp32_wifi_repeater) branch of this repo, that is still under development, but it works generally with good performance and makes it a >2$ WiFi extender.
-- **WiFi Access Point**: If you have a **W32-ET01 board** and you are looking for a plain ESP32 **Ethernet AP**, or correctly for an **Ethernet to WiFi Layer 2 Bridge**, check out [esp32_eth_wifi_bridge](https://github.com/martin-ger/esp32_eth_wifi_bridge). 
-- **Ethernet Router**: If you are looking for an ESP32 NAT router with reverse direction, i.e. **WiFi STA as uplink** (Internet) and **Ethernet as downlink** (LAN), check out [esp32_ethernet_router](https://github.com/martin-ger/esp32_ethernet_router). Here I also experiment with support for the common WIZnet W5500 SPI Ethernet NIC.
-- **PPPoE Router**: If you ever consider using the ESP32 as an open-source ISP router, have a look at the [esp32_PPPoE_router](https://github.com/martin-ger/esp32_PPPoE_router). It adds PPPoE as additional Ethernet uplink option. So it could be used directly on an ISP modem.
-- **ESP8266 NAT Router/Repeater**: The *grandfather* of all these projects, a feature monster once build on the NONOS-SDK for the [ESP8266](https://github.com/martin-ger/esp_wifi_repeater).
-
-## Use cases for the NAT Router:
-- Simple range extender for an existing WiFi network
-- An additional WiFi network with different SSID/password and restricted access for guests or IoT devices
-- VPN-Router using WireGuard
-- WireGuard server for inbound VPN clients (not on C3/C5/C6)
-- Converter from a corporate (WPA2-Enterprise) network to a regular (WPA-PSK) network for simple devices
-- Classic WiFi router with Ethernet uplink
-- MCP-server to control your network using agentic AI
-- Presence detection and network monitoring in a Home Assistant IoT network
-- Debugging and monitoring of WiFi devices
-
-## Key Features
-
-- **NAT Routing**: Full WiFi NAT router with IP forwarding (15+ Mbps throughput)
-- **WireGuard VPN**: Optional VPN tunnel for upstream traffic with automatic MSS clamping and Path MTU
-- **WireGuard Server** (not on C3/C5/C6): Let up to 8 clients connect in to the AP network and the internet, with client configs and QR codes generated on the device
-- **DHCP Reservations**: Assign fixed IPs to specific MAC addresses
-- **Port Forwarding**: Map external ports to internal devices
-- **Firewall**: Define ACL to restrict or monitor traffic
-- **PCAP Capture**: Live packet capture can be streamed to Wireshark or other network tools
-- **WPA2-Enterprise Support**: Connect to corporate networks (PEAP, TTLS, TLS) and convert them to WPA2-PSK
-- **5 GHz WiFi**: Dual-band support on ESP32-C5 with configurable band preference (auto/2.4 GHz/5 GHz)
-- **Ethernet Support**: Use a W32-ET01 board with LAN8720 PHY to get Ethernet uplink
-- **Web Interface**: Web UI with password protection for easy configuration
-- **Serial Console**: Full CLI for advanced configuration
-- **Remote Console**: Network-accessible CLI via TCP (password protected, per-interface binding)
-- **LED Status Indicator**: Visual feedback via plain GPIO LED or addressable LED strip (WS2812/SK6812) with color-coded status
-- **OLED Display**: Status display on 72x40 I2C SSD1306 OLEDs (as found on some ESP32-C3 mini boards)
-- **MQTT Home Assistant**: Publish telemetry and per-client stats to MQTT with HA auto-discovery
-- **MCP Bridge (AI-Ready)**: BETA - Control the router from AI assistants (Claude, etc.) via the Model Context Protocol
-- **mDNS**: The router is reachable as `esp32-nat-router.local` via mDNS/Bonjour — no need to look up the IP address.
-- **OTA Updates**: Flash new firmware directly from the Web UI
-
-The maximum number of simultaniously connected WiFi clients is 8 (5 on the ESP32c3) due to RAM limitations (uses about 5KB per client). Each of the features: Web Interface, PCAP Capture, Wireguard VPN, Remote Console, WPA Enterprise and MQTT Home Assistant require several KB of additional RAM. So using all of them at once will probably burst the ESP32's ressources. Unused/disabled features are optimized for minimal to no RAM usage. Have a look at remaining heap size if in doubt.
-
-## First Boot
-
-After first boot the ESP32 NAT Router will offer a WiFi network with an open AP and the ssid "ESP32_NAT_Router". Configuration can either be done via a web interface or via the serial console.
-
-1. Connect to the **ESP32_NAT_Router** WiFi network
-2. Open **http://esp32-nat-router.local** (or http://192.168.4.1) in your browser
-3. Configure your upstream WiFi and AP settings on the Getting Started page
-4. Click **Save & Reboot**
-
-<img src="https://raw.githubusercontent.com/martin-ger/esp32_nat_router/master/UI_Index.png">
-
-## Flashing Pre-built Binaries
-
-### Web Installer (Easiest)
-
-Flash directly from your browser — no tools or command line required:
-
-**[Open Web Installer](https://martin-ger.github.io/esp32_nat_router/)**
-
-Requires a browser with Web Serial API. Select your firmware variant (WiFi or Ethernet) and click "Connect & Install".
-
-### esptool (Command Line)
-
-Install [esptool](https://github.com/espressif/esptool) and flash using the pre-built binaries from the `firmware_*` directories. Example for ESP32:
-
-```bash
-esptool.py --chip esp32 \
---before default_reset --after hard_reset write_flash \
--z --flash_mode dio --flash_freq 40m --flash_size detect \
-0x1000 firmware_esp32/bootloader.bin \
-0x8000 firmware_esp32/partition-table.bin \
-0xf000 firmware_esp32/ota_data_initial.bin \
-0x20000 firmware_esp32/esp32_nat_router.bin
+```
+                          ┌──────────────── ESP32 VPN Gateway ────────────────┐
+  WireGuard apps ───────► │ WG server         AP 192.168.4.1 ◄──► AP clients  │
+  (phones, laptops)       │ 10.8.0.1                                          │
+                          │                                                   │
+  VPN provider / ◄──────► │ WG client         STA/ETH uplink ◄──► uplink LAN  │
+  own WG server           │                   (+ LAN gateway)   (NAS, printer)│
+                          └───────────────────────────────────────────────────┘
 ```
 
-Pre-built binaries are available for: **ESP32**, **ESP32-C3**, **ESP32-C5**, **ESP32-C6**, **ESP32-S3**, and **WT32-ETH01** (Ethernet).
+Use cases:
 
-See the [Installation](https://github.com/martin-ger/esp32_nat_router/wiki/Installation) wiki page for all chip-specific commands.
+- A pocket VPN router: every device on the ESP32's WiFi is tunnelled, with a kill switch
+- Reach your home or lab network from anywhere: run the WireGuard server on the ESP32, no change to the main router except one UDP port forward
+- Remote access to a network you don't control (a holiday flat, a customer site, a lab): the ESP32 dials out to your WireGuard server, and your VPN machines reach the hosts on that network through it
+- A small, separate VPN network for IoT devices
 
-## Documentation
+## What's different from the ESP32 NAT Router
 
-Full documentation is available in the [Wiki](https://github.com/martin-ger/esp32_nat_router/wiki):
+| Area | ESP32 NAT Router | ESP32 VPN Gateway |
+|------|------------------|-------------------|
+| WireGuard client | ✓ (AP clients only) | ✓, plus the opt-in **[LAN gateway](#lan-gateway)** |
+| WireGuard server | – | ✓ up to 8 clients, keys, configs and QR codes generated on the device (ESP32, ESP32-S3, WT32-ETH01, ESP32-POE-ISO) |
+| Firewall | ACL lists `to_esp`, `from_esp`, `to_ap`, `from_ap` | adds `to_wg` / `from_wg` for the server tunnel |
+| Packet capture | AP and uplink | also the decrypted server tunnel traffic |
+| MQTT / Home Assistant | router and client telemetry | adds VPN status, number of VPN clients, CPU temperature |
+| Web UI | blue/purple theme | red theme, new **🔐 VPN Server** page, VPN server status on the index page |
+| Name | "ESP32 NAT Router" | "ESP32 VPN Gateway" on the index page and in the serial and remote console banners |
+
+Everything else (routing, DHCP reservations, port forwarding, WPA2-Enterprise, OLED and LED status, remote console, MCP bridge, OTA, …) works exactly as in the NAT router and is documented in the [ESP32 NAT Router wiki](https://github.com/martin-ger/esp32_nat_router/wiki).
+
+On first boot the ESP32 offers the open WiFi network **ESP32_VPN_Gateway**. Connect to it and open **http://esp32-vpn-gateway.local** (or http://192.168.4.1) to configure the uplink. Where the NAT router wiki mentions "ESP32_NAT_Router" or "esp32-nat-router", use these names instead.
+
+## WireGuard Server
+
+On the **ESP32**, **ESP32-S3**, **WT32-ETH01** and **ESP32-POE-ISO** builds, the ESP32 can be the WireGuard server for up to **8 clients**:
+
+- **Keys on the device**: the router can create a client's key pair and show a ready-to-use config file and QR code. The client's private key is shown once and never stored.
+- **Optional preshared key** per client
+- **Full or split tunnel** configs
+- **AP network access**: VPN clients and AP clients reach each other directly (routed, no NAT)
+- **Client to client**: VPN clients reach each other's tunnel addresses
+- **Internet** through the router's uplink, masqueraded behind the uplink address
+- **Configurable tunnel MTU** (1280–1420), written into the client configs, with MSS clamping on the tunnel
+- **Replay protection across reboots**
+- **Status** per client: endpoint, last handshake, traffic, rejected handshakes
+
+### Quick start
+
+```
+wg_server enable
+wg_server host myhome.example.org      # address the clients dial (optional)
+restart
+wg_server peer add phone               # prints the client config once
+```
+
+Then forward UDP port 51820 on your internet router to the ESP32. The same can be done on the **🔐 VPN Server** page (`/wgserver`), which also shows the client config as a QR code for the WireGuard app.
+
+### `wg_server` command
+
+```
+wg_server status                      - Show settings and peers
+wg_server enable|disable              - Turn the server on/off (restart to apply)
+wg_server port <port>                 - UDP listen port (restart to apply)
+wg_server mtu <1280-1420>             - Tunnel MTU, MSS clamp = MTU-40 (restart; re-export client configs)
+wg_server subnet <ip> [netmask]       - Server tunnel address, default 10.8.0.1/24 (restart to apply)
+wg_server host <name|ip>              - Public address written into client configs (- clears it)
+wg_server genkey                      - New server key (restart; re-export all clients)
+wg_server peer add <name> [-k <pubkey>] [-i <ip>] [-s] [-p | -P <psk>]
+                                      - Add a client; without -k a key pair is generated
+                                        -s: split tunnel config, -p: generate a preshared key,
+                                        -P: use this preshared key
+wg_server peer del <name>             - Remove a client
+wg_server peer conf <name> [-s]       - Print the config again, without the private key
+```
+
+### Firewall for the tunnel
+
+Two new ACL lists filter the server tunnel: `to_wg` (VPN clients → router) and `from_wg` (router → VPN clients). They use the same syntax as the other lists:
+
+```
+# VPN clients may only use the web servers in the AP network
+acl to_wg TCP any * 192.168.4.0/24 80 allow
+acl to_wg IP any 192.168.4.0/24 deny
+
+# Isolate the VPN clients from each other
+acl to_wg IP any 10.8.0.1 allow
+acl to_wg IP any 10.8.0.0/24 deny
+```
+
+### Limits
+
+- Not in the ESP32-C3, C5 and C6 firmware (not enough flash or RAM headroom).
+- The server and the WireGuard client are **mutually exclusive**: the server doesn't start while the client is enabled.
+- IPv4 only. The router must be reachable from the internet on the UDP port; an uplink behind carrier-grade NAT can't take incoming connections.
+
+Details: [WireGuard Server](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-Server) in the wiki.
+
+## LAN Gateway
+
+By default the WireGuard client tunnel only serves the ESP32's own AP clients. With the **LAN gateway** switched on, machines on the VPN can also reach hosts on the ESP32's **uplink network**: the WiFi network it joined as a station, or its wired LAN on the Ethernet builds.
+
+```
+  laptop on the VPN ──► your WG server ──► tunnel ──► ESP32 ──NAT──► 192.168.178.20 (NAS)
+                                                       uplink 192.168.178.101
+```
+
+How it works:
+
+- **NAT**: packets from the tunnel to the uplink subnet are masqueraded to the ESP32's uplink address. LAN hosts answer the ESP32, so the network's main router needs **no static route** back into the VPN.
+- **MSS clamping**: TCP SYNs through the tunnel are clamped to tunnel MTU − 40 in both directions, because LAN hosts assume 1500.
+- **Path MTU**: if a LAN host sends a reply with DF set that is larger than the tunnel MTU, the ESP32 answers with ICMP Fragmentation Needed, so the host lowers its packet size.
+
+Only the uplink subnet itself is reachable; the ESP32 is not an internet exit for VPN peers. AP clients keep working as before. Connections are started from the VPN side.
+
+### Setup
+
+1. Switch it on and restart:
+   ```
+   set_vpn -L 1
+   restart
+   ```
+   or set **LAN Gateway** to **On** on the `/vpn` page.
+2. On your WireGuard server, route the uplink subnet to the ESP32 by adding it to the ESP32 peer's `AllowedIPs`:
+   ```ini
+   [Peer]
+   # ESP32 VPN Gateway
+   PublicKey = <ESP32 public key>
+   AllowedIPs = 10.0.0.2/32, 192.168.4.0/24, 192.168.178.0/24
+   ```
+3. On the remote machines, route the same subnet into their tunnel (add it to their `AllowedIPs`). It must not overlap with the networks they are on.
+
+`show vpn` and the `/vpn` page show `LAN Gateway: on (active)` while it is applied to a connected tunnel.
+
+### Notes
+
+- **Security**: every machine that can send through your VPN server to this peer reaches the whole uplink network. Only use it with a VPN you control, and keep it off otherwise (default).
+- The VPN server has to route a subnet to the ESP32, so use a Linux (or similar) WireGuard server. The WireGuard server built into this firmware routes only each client's own tunnel address.
+- Needs NAT on the AP to be on (the default).
+- The NAT table (512 entries) is shared with the AP clients. With a WiFi uplink, traffic enters and leaves on the same radio, so expect a fraction of the normal VPN throughput.
+- Path MTU is reported for the 16 most recent gateway sessions; TCP is covered by the MSS clamp in any case.
+
+Details: [LAN Gateway](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-VPN#lan-gateway) in the wiki.
+
+## WireGuard Client
+
+The client works as in the NAT router: route all traffic or split tunnel, kill switch, custom DNS for AP clients, configurable MTU with automatic MSS clamping and Path MTU, and import of a standard `.conf` file on the `/vpn` page. New and changed options of `set_vpn`:
+
+```
+set_vpn ... [-L <0|1>]     LAN gateway: VPN peer reaches the uplink LAN via NAT (default 0)
+set_vpn -k ""              Remove the preshared key
+```
+
+Details: [WireGuard VPN](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-VPN) in the wiki.
+
+## Other Changes
+
+- **Packet capture**: in promiscuous mode, the capture also records the decrypted traffic of VPN server clients. In ACL monitor mode it records the packets of `to_wg` / `from_wg` rules with the monitor flag. See [Packet Capture](https://github.com/martin-ger/esp32_nat_router/wiki/Packet-Capture).
+- **MQTT / Home Assistant**: new entities **VPN Status** (binary sensor), **VPN Clients** (WireGuard server builds) and **CPU Temperature** (chips with a temperature sensor). See [MQTT Home Assistant](https://github.com/martin-ger/esp32_nat_router/wiki/MQTT-Home-Assistant).
+- **Web UI**: red theme and red icon, the **🔐 VPN Server** page, a VPN server status row on the index page, and the **LAN Gateway** field on the VPN page.
+- **NVS keys**: `vpn_lan_gw` for the LAN gateway, and the `wgs_*` keys of the server. The server's peer table holds the preshared keys and is left out of plain-text config exports. See [NVS Storage](https://github.com/martin-ger/esp32_nat_router/wiki/NVS-Storage).
+
+## Supported Hardware
+
+| Build | Chip | Uplink | WG client + LAN gateway | WG server |
+|-------|------|--------|:-----------------------:|:---------:|
+| `esp32` | ESP32 | WiFi | ✓ | ✓ |
+| `esp32s3` | ESP32-S3 | WiFi | ✓ | ✓ |
+| `wt32_eth01` | ESP32 | Ethernet (LAN8720) | ✓ | ✓ |
+| `esp32_poe_iso` | ESP32 | Ethernet | ✓ | ✓ |
+| `esp32c3` | ESP32-C3 | WiFi | ✓ | – |
+| `esp32c5` | ESP32-C5 | WiFi (2.4 / 5 GHz) | ✓ | – |
+| `esp32c6` | ESP32-C6 | WiFi | ✓ | – |
+
+For a VPN gateway, a dual-core chip (**ESP32-S3** or **ESP32**) is the best choice: WireGuard encryption costs CPU time.
+
+## Everything Else
+
+All other features come unchanged from the ESP32 NAT Router. In short:
+
+- NAT routing between the AP and the WiFi or Ethernet uplink, 5–15 Mbit/s
+- DHCP reservations, port forwarding, TTL override, custom DNS
+- Firewall (ACL) with monitoring
+- WPA2-Enterprise uplink (PEAP, TTLS, TLS)
+- Web UI with password protection, serial console, remote console (TCP)
+- LED and LED strip status, OLED display
+- MQTT with Home Assistant discovery, syslog
+- MCP bridge for AI assistants
+- OTA updates from the web UI, configuration backup and restore
+
+See the [ESP32 NAT Router wiki](https://github.com/martin-ger/esp32_nat_router/wiki) for all of these, in particular:
 
 | Page | Description |
 |------|-------------|
 | [Web Interface](https://github.com/martin-ger/esp32_nat_router/wiki/Web-Interface) | Web UI pages, security, backup/restore |
 | [WiFi and Network](https://github.com/martin-ger/esp32_nat_router/wiki/WiFi-and-Network) | DHCP reservations, port forwarding, WPA2-Enterprise, TTL, DNS |
-| [Firewall](https://github.com/martin-ger/esp32_nat_router/wiki/Firewall) | ACL packet filtering rules and configuration |
-| [Packet Capture](https://github.com/martin-ger/esp32_nat_router/wiki/Packet-Capture) | PCAP streaming to Wireshark |
-| [WireGuard VPN](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-VPN) | VPN tunnel configuration and server setup |
-| [WireGuard Server](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-Server) | Inbound VPN server for remote clients (not on C3/C5/C6) |
-| [Remote Console](https://github.com/martin-ger/esp32_nat_router/wiki/Remote-Console) | Network-accessible CLI via TCP |
-| [Security](https://github.com/martin-ger/esp32_nat_router/wiki/Security) | Hardening guide: interface binding, VPN, ACL, credential handling |
-| [MQTT Home Assistant](https://github.com/martin-ger/esp32_nat_router/wiki/MQTT-Home-Assistant) | MQTT telemetry with HA auto-discovery |
-| [MCP Bridge](https://github.com/martin-ger/esp32_nat_router/wiki/MCP-Bridge) | AI assistant integration via Model Context Protocol |
-| [CLI Reference](https://github.com/martin-ger/esp32_nat_router/wiki/CLI-Reference) | Full command listing for the serial/remote console |
-| [NVS Storage](https://github.com/martin-ger/esp32_nat_router/wiki/NVS-Storage) | Reference of all persisted configuration keys |
+| [Firewall](https://github.com/martin-ger/esp32_nat_router/wiki/Firewall) | ACL packet filtering rules |
+| [Security](https://github.com/martin-ger/esp32_nat_router/wiki/Security) | Hardening guide |
+| [CLI Reference](https://github.com/martin-ger/esp32_nat_router/wiki/CLI-Reference) | Full command listing |
 | [Hardware](https://github.com/martin-ger/esp32_nat_router/wiki/Hardware) | LED status, OLED display, antenna switch, factory reset |
-| [WT32-ETH01](https://github.com/martin-ger/esp32_nat_router/wiki/WT32-ETH01) | Ethernet uplink variant (LAN8720 PHY) |
 | [Installation](https://github.com/martin-ger/esp32_nat_router/wiki/Installation) | Flashing pre-built binaries |
-| [Building](https://github.com/martin-ger/esp32_nat_router/wiki/Building) | Compiling from source with ESP-IDF or PlatformIO |
+| [Building](https://github.com/martin-ger/esp32_nat_router/wiki/Building) | Compiling from source |
 
-## Building from Source
+## Building and Flashing
+
+ESP-IDF 5.5 is required. Build one variant, e.g. the ESP32-S3:
 
 ```bash
-idf.py menuconfig    # Enable LWIP IP forwarding, NAT, and L2-to-L3 copy
-idf.py build
-idf.py flash monitor
+idf.py -B build_esp32s3 -D SDKCONFIG=sdkconfig.esp32s3 \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3" build flash monitor
 ```
 
-See the [Building](https://github.com/martin-ger/esp32_nat_router/wiki/Building) wiki page for PlatformIO, WT32-ETH01, and multi-target build instructions.
-
-## Performance
-
-The performance of the Router depends on several factors, of course including WiFi signal strength and congestion of the used frequencies. Expect something in the range from 5 - 15 mbps under reasonable conditions. Single video streams should be possible, but it is not intended as a 2$ full replacement for a professional home router.
-
-Internally the speed depends on the processing power of the used ESP32 chip (single core vs. dual core, clock speed) and available RAM for buffering. All "hot pathes", i.e. the direct routing of packets are optimized, any additional features, especially VPN, ACL processing, per client statistics, and packet capturing, introduce some delays. If you need maximum speed, dynamically disable all unused features in the configuration. However in default config everything is already disabled, the only major feature, that is running, is the web interface. Especially on the C3 and C5 with small RAM (and combined DRAM and IRAM) disabling it can result in an additional performance boost, due to the additional buffer space. If required, you can re-enable it via the remote console at any time (with a reboot).
+`./build_all_targets.sh` builds all variants and copies the binaries to the `firmware_*` directories. Flashing pre-built binaries works as described on the [Installation](https://github.com/martin-ger/esp32_nat_router/wiki/Installation) page; the binaries in this branch's `firmware_*` directories are the VPN Gateway builds.
 
 ## Licence
 
-The WireGuard submodul has the following licence_
+The WireGuard implementation ([esp_wireguard](https://github.com/martin-ger/esp_wireguard_idf_5.5.x)) has the following licence:
 ```
 Copyright (c) 2021 Kenta Ida (fuga@fugafuga.org)
 
