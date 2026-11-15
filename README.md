@@ -50,6 +50,8 @@ On the **ESP32**, **ESP32-S3**, **WT32-ETH01** and **ESP32-POE-ISO** builds, the
 - **Client to client**: VPN clients reach each other's tunnel addresses
 - **Internet** through the router's uplink, masqueraded behind the uplink address
 - **Configurable tunnel MTU** (1280–1420), written into the client configs, with MSS clamping on the tunnel
+- **Path MTU**: hosts on the uplink side (LAN or internet) that send a reply with DF set larger than the tunnel MTU get ICMP Fragmentation Needed, so they lower their packet size
+- **Uplink LAN access**: VPN clients reach hosts on the router's uplink network (masqueraded, always on; restrict it with `to_wg` rules)
 - **Replay protection across reboots**
 - **Status** per client: endpoint, last handshake, traffic, rejected handshakes
 
@@ -146,7 +148,7 @@ Only the uplink subnet itself is reachable; the ESP32 is not an internet exit fo
 - The VPN server has to route a subnet to the ESP32, so use a Linux (or similar) WireGuard server. The WireGuard server built into this firmware routes only each client's own tunnel address.
 - Needs NAT on the AP to be on (the default).
 - The NAT table (512 entries) is shared with the AP clients. With a WiFi uplink, traffic enters and leaves on the same radio, so expect a fraction of the normal VPN throughput.
-- Path MTU is reported for the 16 most recent gateway sessions; TCP is covered by the MSS clamp in any case.
+- Path MTU is reported for replies from the 16 most recently used remote endpoints (address, protocol, port); TCP is covered by the MSS clamp in any case.
 
 Details: [LAN Gateway](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-VPN#lan-gateway) in the wiki.
 

@@ -49,11 +49,15 @@ static netif_input_fn original_ap_netif_input = NULL;
 static netif_linkoutput_fn original_ap_netif_linkoutput = NULL;
 static struct netif *ap_netif = NULL;
 
-// VPN LAN gateway (vpn_lan_gw): state shared by the tunnel hooks and the
-// uplink input hook, see the "VPN LAN gateway" section below.
+// Tunnel Path MTU on the uplink: tunnel MTU reported to hosts on the uplink
+// side (0 = off), set by the VPN LAN gateway or the WireGuard server. See the
+// "Uplink Path MTU" section below.
+static volatile uint16_t uplink_pmtu = 0;
+static bool uplink_frag_needed(struct pbuf *p, struct netif *netif);
+
+// VPN LAN gateway (vpn_lan_gw) state, see the "VPN LAN gateway" section.
 static volatile bool vpn_gw_active = false;
 static uint16_t vpn_gw_mtu = 0;
-static bool gw_uplink_frag_needed(struct pbuf *p, struct netif *netif);
 
 // Per-client traffic statistics for AP clients
 static client_stats_entry_t client_stats[CLIENT_STATS_MAX];
@@ -227,9 +231,9 @@ static IRAM_ATTR err_t netif_input_hook(struct pbuf *p, struct netif *netif) {
         }
     }
 
-    // VPN LAN gateway: answer oversized DF replies of LAN hosts that would go
-    // into the tunnel with ICMP Fragmentation Needed, and drop them
-    if (vpn_gw_active && gw_uplink_frag_needed(p, netif)) {
+    // Tunnel Path MTU: answer oversized DF replies that would go into a
+    // WireGuard tunnel with ICMP Fragmentation Needed, and drop them
+    if (uplink_pmtu && uplink_frag_needed(p, netif)) {
         pbuf_free(p);
         return ERR_OK;
     }
@@ -711,32 +715,91 @@ void init_ap_netif_hooks(void) {
  * MSS: TCP SYNs are clamped to tunnel MTU - 40 in both directions; LAN hosts
  * otherwise assume 1500.
  *
- * Path MTU: a LAN host's DF reply larger than the tunnel MTU would be refused
- * by ip4_forward() with an ICMP that carries no MTU and the translated header,
- * which the host can't match to its connection. The uplink input hook sends a
- * proper Fragmentation Needed instead, from the uplink address with the
- * untranslated header. It runs in the WiFi/ETH driver task, where the NAPT
- * table can't be read, so the input hook remembers the most recent translated
- * ports of gateway sessions in a small ring (gw_ports); TCP is covered by the
- * MSS clamp anyway, so missing an old entry only matters for UDP with DF. */
+ * Path MTU: see "Uplink Path MTU" below; the input hook records the flows. */
 static netif_input_fn original_gw_input = NULL;
 static netif_output_fn original_gw_output = NULL;
 
-#define GW_PORTS_MAX 16
-static uint32_t gw_ports[GW_PORTS_MAX];     // (proto << 16) | port (network order), 0 = empty
-static uint8_t gw_ports_next = 0;
+/* Uplink Path MTU, for the VPN LAN gateway and the WireGuard server.
+ *
+ * Traffic from a tunnel to the uplink side is masqueraded to the router's
+ * uplink address. A reply with DF set that is larger than the tunnel MTU would
+ * be refused by ip4_forward() with an ICMP that carries no MTU and the
+ * translated header, which the sender can't match to its connection. The
+ * uplink input hook sends a proper Fragmentation Needed instead, from the
+ * uplink address with the untranslated header, and drops the packet.
+ *
+ * The uplink hook runs in the WiFi/ETH driver task, where the NAPT table
+ * can't be read, and for server traffic lwIP translates inside ip4_forward()
+ * where no hook sees the mapped port. The tunnel input hooks therefore record
+ * the remote endpoint (address, protocol, port) of recent tunnel flows in a
+ * small ring (pmtu_flows), and a reply to the uplink address from such an
+ * endpoint is taken to be headed for the tunnel. An AP client talking to the
+ * same endpoint at the same time may get the smaller MTU too, which only costs
+ * it some packet size. TCP is covered by the MSS clamp anyway, so the ring
+ * mainly matters for UDP with DF (e.g. QUIC). */
+#define PMTU_FLOWS_MAX 16
+typedef struct {
+    uint32_t addr;      // remote address (network order), 0 = empty
+    uint32_t key;       // (proto << 16) | remote port (network order)
+} pmtu_flow_t;
+static volatile pmtu_flow_t pmtu_flows[PMTU_FLOWS_MAX];
+static uint8_t pmtu_flows_next = 0;
 
-static IRAM_ATTR bool gw_port_known(uint32_t key) {
-    for (int i = 0; i < GW_PORTS_MAX; i++) {
-        if (gw_ports[i] == key) return true;
+static IRAM_ATTR bool pmtu_flow_known(uint32_t addr, uint32_t key) {
+    for (int i = 0; i < PMTU_FLOWS_MAX; i++) {
+        if (pmtu_flows[i].addr == addr && pmtu_flows[i].key == key) return true;
     }
     return false;
 }
 
-static IRAM_ATTR void gw_port_remember(uint32_t key) {
-    if (gw_port_known(key)) return;
-    gw_ports[gw_ports_next] = key;      // aligned 32-bit store, read by the uplink hook
-    gw_ports_next = (gw_ports_next + 1) % GW_PORTS_MAX;
+/* Tunnel input (tcpip thread): record the destination of a TCP SYN or UDP
+ * packet that leaves through the uplink. p->payload is the IP header. The two
+ * words of an entry are written separately; a reader catching a half-written
+ * entry at worst answers one unrelated packet, which then gets resent smaller. */
+static IRAM_ATTR void pmtu_flow_remember(const struct pbuf *p) {
+    const struct ip_hdr *iphdr = (const struct ip_hdr *)p->payload;
+    uint8_t proto = IPH_PROTO(iphdr);
+    if (proto != IP_PROTO_TCP && proto != IP_PROTO_UDP) return;
+    uint16_t ihl = IPH_HL(iphdr) * 4;
+    if (p->len < ihl + (proto == IP_PROTO_TCP ? 14 : 4)) return;
+    const uint8_t *th = (const uint8_t *)p->payload + ihl;
+    if (proto == IP_PROTO_TCP && !(th[13] & 0x02)) return;      // SYN only
+    uint32_t addr = iphdr->dest.addr;
+    uint32_t key = ((uint32_t)proto << 16) | *(const uint16_t *)(th + 2);
+    if (pmtu_flow_known(addr, key)) return;
+    pmtu_flows[pmtu_flows_next].addr = 0;
+    pmtu_flows[pmtu_flows_next].key = key;
+    pmtu_flows[pmtu_flows_next].addr = addr;
+    pmtu_flows_next = (pmtu_flows_next + 1) % PMTU_FLOWS_MAX;
+}
+
+static void uplink_pmtu_set(uint16_t mtu) {
+    for (int i = 0; i < PMTU_FLOWS_MAX; i++) {
+        pmtu_flows[i].addr = 0;
+    }
+    pmtu_flows_next = 0;
+    uplink_pmtu = mtu;
+}
+
+/* Uplink input (driver task): a frame for the uplink address from a recorded
+ * tunnel flow endpoint will be translated and forwarded into the tunnel. If it
+ * exceeds the tunnel MTU with DF set, send ICMP Fragmentation Needed and
+ * return true (the caller drops it). */
+static IRAM_ATTR bool uplink_frag_needed(struct pbuf *p, struct netif *netif) {
+    uint16_t mtu = uplink_pmtu;
+    if (p == NULL || p->len < 14 + 20) return false;
+    const uint8_t *eth = (const uint8_t *)p->payload;
+    if (eth[12] != 0x08 || eth[13] != 0x00) return false;
+    const struct ip_hdr *iphdr = (const struct ip_hdr *)(eth + 14);
+    if (IPH_V(iphdr) != 4 || lwip_ntohs(IPH_LEN(iphdr)) <= mtu) return false;
+    if (iphdr->dest.addr != ip4_addr_get_u32(netif_ip4_addr(netif))) return false;
+    uint8_t proto = IPH_PROTO(iphdr);
+    if (proto != IP_PROTO_TCP && proto != IP_PROTO_UDP) return false;
+    uint16_t ihl = IPH_HL(iphdr) * 4;
+    if (ihl < 20 || p->len < 14u + ihl + 4) return false;
+    uint16_t sport = *(const uint16_t *)(eth + 14 + ihl);
+    if (!pmtu_flow_known(iphdr->src.addr, ((uint32_t)proto << 16) | sport)) return false;
+    return send_icmp_frag_needed(p, netif, mtu, iphdr->dest.addr, original_netif_linkoutput);
 }
 
 static IRAM_ATTR err_t gw_input_hook(struct pbuf *p, struct netif *netif) {
@@ -770,17 +833,13 @@ static IRAM_ATTR err_t gw_input_hook(struct pbuf *p, struct netif *netif) {
         return ERR_OK;
     }
 
+    pmtu_flow_remember(p);      // before translation: dest is the LAN host
+
     /* ip_napt_forward() only checks inp->napt; pass the AP, whose flag is the
      * precondition checked above. The tunnel netif's own flag stays off. */
     if (ip_napt_forward(p, iphdr, ap_netif, sta_netif) != ERR_OK) {
         pbuf_free(p);   // unknown TCP/UDP session or NAPT table full
         return ERR_OK;
-    }
-    if (proto == IP_PROTO_TCP || proto == IP_PROTO_UDP) {
-        const uint8_t *th = (const uint8_t *)p->payload + ihl;
-        if (proto == IP_PROTO_UDP || (th[13] & 0x02) /* SYN */) {
-            gw_port_remember(((uint32_t)proto << 16) | *(const uint16_t *)th);  // translated src port
-        }
     }
     return original_gw_input(p, netif);
 }
@@ -790,32 +849,11 @@ static IRAM_ATTR err_t gw_output_hook(struct netif *netif, struct pbuf *p, const
     return original_gw_output(netif, p, ipaddr);
 }
 
-/* Uplink input (driver task): a frame for the uplink address whose destination
- * port belongs to a gateway session will be translated to a tunnel address and
- * forwarded into the tunnel. If it exceeds the tunnel MTU with DF set, send
- * ICMP Fragmentation Needed and return true (the caller drops it). */
-static IRAM_ATTR bool gw_uplink_frag_needed(struct pbuf *p, struct netif *netif) {
-    if (p == NULL || p->len < 14 + 20) return false;
-    const uint8_t *eth = (const uint8_t *)p->payload;
-    if (eth[12] != 0x08 || eth[13] != 0x00) return false;
-    const struct ip_hdr *iphdr = (const struct ip_hdr *)(eth + 14);
-    if (IPH_V(iphdr) != 4 || lwip_ntohs(IPH_LEN(iphdr)) <= vpn_gw_mtu) return false;
-    if (iphdr->dest.addr != ip4_addr_get_u32(netif_ip4_addr(netif))) return false;
-    uint8_t proto = IPH_PROTO(iphdr);
-    if (proto != IP_PROTO_TCP && proto != IP_PROTO_UDP) return false;
-    uint16_t ihl = IPH_HL(iphdr) * 4;
-    if (ihl < 20 || p->len < 14u + ihl + 4) return false;
-    uint16_t dport = *(const uint16_t *)(eth + 14 + ihl + 2);
-    if (!gw_port_known(((uint32_t)proto << 16) | dport)) return false;
-    return send_icmp_frag_needed(p, netif, vpn_gw_mtu, iphdr->dest.addr, original_netif_linkoutput);
-}
-
 // Must run on the tcpip thread, after the client tunnel is up with its final MTU.
 void vpn_gw_hooks_install(struct netif *wg) {
     if (wg == NULL) return;
     vpn_gw_mtu = wg->mtu;
-    memset(gw_ports, 0, sizeof(gw_ports));
-    gw_ports_next = 0;
+    uplink_pmtu_set(vpn_gw_mtu);
     if (wg->input != gw_input_hook) {
         original_gw_input = wg->input;
         original_gw_output = wg->output;
@@ -830,6 +868,7 @@ void vpn_gw_hooks_install(struct netif *wg) {
 // pass packets through until it is gone; a new tunnel gets fresh pointers.
 void vpn_gw_hooks_remove(void) {
     vpn_gw_active = false;
+    uplink_pmtu = 0;
 }
 
 bool vpn_gw_is_active(void) {
@@ -904,6 +943,26 @@ static IRAM_ATTR bool wg_forward_to_client(struct pbuf *p, struct netif *netif) 
     return true;
 }
 
+/* True if a packet from a VPN client is forwarded out of the uplink (and so
+ * masqueraded): not for the router or the tunnel or AP subnet. */
+static IRAM_ATTR bool wg_leaves_via_uplink(const struct pbuf *p, struct netif *netif) {
+    if (p->len < IP_HLEN || sta_netif == NULL) return false;
+    const struct ip_hdr *iphdr = (const struct ip_hdr *)p->payload;
+    if (IPH_V(iphdr) != 4) return false;
+    ip4_addr_t dest;
+    ip4_addr_copy(dest, iphdr->dest);
+    if (ip4_addr_ismulticast(&dest) || ip4_addr_isbroadcast(&dest, netif) ||
+        ip4_addr_eq(&dest, netif_ip4_addr(sta_netif)) ||
+        ip4_addr_net_eq(&dest, netif_ip4_addr(netif), netif_ip4_netmask(netif))) {
+        return false;
+    }
+    if (ap_netif != NULL &&
+        ip4_addr_net_eq(&dest, netif_ip4_addr(ap_netif), netif_ip4_netmask(ap_netif))) {
+        return false;
+    }
+    return true;
+}
+
 static IRAM_ATTR err_t wg_input_hook(struct pbuf *p, struct netif *netif) {
     bool monitored;
     if (wg_acl_denies(ACL_TO_WG, p, true, &monitored)) {
@@ -916,6 +975,9 @@ static IRAM_ATTR err_t wg_input_hook(struct pbuf *p, struct netif *netif) {
     }
     if (wg_forward_to_client(p, netif)) {
         return ERR_OK;
+    }
+    if (wg_leaves_via_uplink(p, netif)) {
+        pmtu_flow_remember(p);
     }
     return original_wg_input(p, netif);
 }
@@ -940,5 +1002,6 @@ void wg_netif_hooks_install(struct netif *wg) {
     wg_mss_clamp = (uint16_t)(wg->mtu - 40);
     wg->input = wg_input_hook;
     wg->output = wg_output_hook;
+    uplink_pmtu_set(wg->mtu);
 }
 #endif /* CONFIG_WG_SERVER */
