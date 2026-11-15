@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/ip_addr.h"
+#include "esp_netif.h"
 #include "vpn_config.h"
 #include "router_config.h"
 #include "portmap.h"
@@ -35,6 +36,12 @@ void vpn_set_subnet(uint32_t ip, uint32_t mask) {
 IRAM_ATTR bool vpn_in_subnet(uint32_t ip) {
     if (vpn_subnet_mask == 0) return false;
     return (ip & vpn_subnet_mask) == vpn_subnet_ip;
+}
+
+static esp_err_t gw_install_cb(void *ctx)
+{
+    vpn_gw_hooks_install((struct netif *)ctx);
+    return ESP_OK;
 }
 
 esp_err_t vpn_connect(void)
@@ -108,6 +115,11 @@ esp_err_t vpn_connect(void)
     ap_pmtu = (uint16_t)vpn_mtu;
     vpn_connected = true;
 
+    /* LAN gateway: let the VPN peer reach the uplink LAN (needs the final MTU) */
+    if (vpn_lan_gw && wg_ctx.netif) {
+        esp_netif_tcpip_exec(gw_install_cb, wg_ctx.netif);
+    }
+
     /* Cache VPN tunnel IP and activate VPN-bound port mappings */
     if (wg_ctx.netif) {
         vpn_tunnel_ip = ip_2_ip4(&wg_ctx.netif->ip_addr)->addr;
@@ -144,6 +156,7 @@ void vpn_disconnect(void)
     // Set vpn_connected false FIRST to prevent race with vpn_is_connected()
     // (called from netif hooks and HTTP handlers in other tasks)
     vpn_connected = false;
+    vpn_gw_hooks_remove();
     vpn_tunnel_ip = 0;
     ap_mss_clamp = 0;
     ap_pmtu = 0;

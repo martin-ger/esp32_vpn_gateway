@@ -137,6 +137,7 @@ char* vpn_dns = NULL;
 bool vpn_connected = false;
 uint32_t vpn_tunnel_ip = 0;         // Cached VPN tunnel IP (network byte order)
 int32_t vpn_killswitch = 1;         // Kill switch default on
+int32_t vpn_lan_gw = 0;             // VPN LAN gateway default off
 int32_t vpn_route_all = 1;          // Route all traffic through VPN (default on)
 
 /* FreeRTOS event group to signal when we are connected*/
@@ -1587,6 +1588,10 @@ void app_main(void)
     int vpn_ks_setting = 1;  // Default on
     if (get_config_param_int("vpn_ks", &vpn_ks_setting) == ESP_OK) {
         vpn_killswitch = (int32_t)vpn_ks_setting;
+    }
+    int vpn_lan_gw_setting = 0;  // Default off
+    if (get_config_param_int("vpn_lan_gw", &vpn_lan_gw_setting) == ESP_OK) {
+        vpn_lan_gw = (int32_t)vpn_lan_gw_setting;
     }
     int vpn_rall_setting = 1;  // Default: route all through VPN
     if (get_config_param_int("vpn_rall", &vpn_rall_setting) == ESP_OK) {

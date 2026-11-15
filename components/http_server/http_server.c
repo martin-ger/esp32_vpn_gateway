@@ -3629,6 +3629,9 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
                     if (httpd_query_key_value(buf, "vpn_rall", param, sizeof(param)) == ESP_OK) {
                         nvs_set_i32(nvs, "vpn_rall", atoi(param));
                     }
+                    if (httpd_query_key_value(buf, "vpn_lan_gw", param, sizeof(param)) == ESP_OK) {
+                        nvs_set_i32(nvs, "vpn_lan_gw", atoi(param) ? 1 : 0);
+                    }
 
                     nvs_commit(nvs);
                     nvs_close(nvs);
@@ -3698,6 +3701,11 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
              vpn_route_all ? "#4caf50" : "#2196f3", vpn_route_all ? "Yes" : "No (split tunnel)");
     SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
 
+    snprintf(row, VPN_BUF_SIZE, "<tr><td>LAN Gateway:</td><td><strong style='color:%s;'>%s</strong></td></tr>",
+             vpn_gw_is_active() ? "#4caf50" : "#888",
+             !vpn_lan_gw ? "Off" : (vpn_gw_is_active() ? "On (active)" : "On (inactive)"));
+    SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+
     SEND_CHUNK(req, "</table></div>", HTTPD_RESP_USE_STRLEN);
 
     /* Form - streamed field by field to avoid large snprintf */
@@ -3764,6 +3772,14 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
         "<option value='1' %s>Yes (all traffic)</option><option value='0' %s>No (split tunnel)</option>"
         "</select></td></tr>",
         vpn_route_all ? "selected" : "", vpn_route_all ? "" : "selected");
+    SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>LAN Gateway</td><td><select name='vpn_lan_gw'>"
+        "<option value='0' %s>Off</option><option value='1' %s>On</option>"
+        "</select><br><small>Lets the VPN peer reach hosts on the uplink network (NAT to this router's uplink address). "
+        "The VPN server must route the uplink subnet to this peer.</small></td></tr>",
+        vpn_lan_gw ? "" : "selected", vpn_lan_gw ? "selected" : "");
     SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
 
     SEND_CHUNK(req, VPN_CHUNK_FORM_CLOSE, HTTPD_RESP_USE_STRLEN);

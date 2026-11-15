@@ -1824,6 +1824,7 @@ static int show(int argc, char **argv)
         printf("Path MTU: %u\n", ap_pmtu);
         printf("Kill Switch: %s\n", vpn_killswitch ? "on" : "off");
         printf("Route All: %s\n", vpn_route_all ? "yes (all traffic)" : "no (split tunnel)");
+        printf("LAN Gateway: %s\n", !vpn_lan_gw ? "off" : (vpn_gw_is_active() ? "on (active)" : "on (inactive)"));
 
     } else if (strcmp(type, "routes") == 0) {
         /* lwIP has no routing table: a packet leaves through the first up
@@ -3953,6 +3954,7 @@ static struct {
     struct arg_int *enable;
     struct arg_int *killswitch;
     struct arg_int *route_all;
+    struct arg_int *lan_gw;
     struct arg_end *end;
 } set_vpn_args;
 
@@ -4025,6 +4027,9 @@ static int set_vpn_cmd(int argc, char **argv)
     if (set_vpn_args.route_all->count > 0) {
         nvs_set_i32(nvs, "vpn_rall", set_vpn_args.route_all->ival[0]);
     }
+    if (set_vpn_args.lan_gw->count > 0) {
+        nvs_set_i32(nvs, "vpn_lan_gw", set_vpn_args.lan_gw->ival[0] ? 1 : 0);
+    }
 
     nvs_commit(nvs);
     nvs_close(nvs);
@@ -4047,6 +4052,7 @@ static void register_set_vpn(void)
     set_vpn_args.enable    = arg_int0("e", "enable", "<0|1>", "Enable/disable VPN");
     set_vpn_args.killswitch = arg_int0("K", "killswitch", "<0|1>", "Kill switch: block internet when VPN down (default on)");
     set_vpn_args.route_all = arg_int0("R", "route-all", "<0|1>", "Route all traffic through VPN (0=split tunnel)");
+    set_vpn_args.lan_gw    = arg_int0("L", "lan-gw", "<0|1>", "LAN gateway: VPN peer reaches the uplink LAN via NAT (default off)");
     set_vpn_args.end       = arg_end(4);
 
     const esp_console_cmd_t cmd = {

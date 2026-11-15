@@ -35,6 +35,7 @@ extern bool vpn_connected;          // Runtime state: tunnel is up
 extern uint32_t vpn_tunnel_ip;      // Cached VPN tunnel IP (network byte order, 0 if not connected)
 extern int32_t vpn_killswitch;      // Kill switch: block AP client internet when VPN is down (default on)
 extern int32_t vpn_route_all;       // Route all traffic through VPN (1) or only VPN subnet (0, split tunnel)
+extern int32_t vpn_lan_gw;          // LAN gateway: VPN peer reaches the uplink LAN via NAT (default off)
 
 // WireGuard VPN functions
 esp_err_t vpn_connect(void);
@@ -56,6 +57,14 @@ bool vpn_in_subnet(uint32_t ip);
 // to the uplink and would otherwise break route-all mode. No-op unless the VPN
 // is connected with route_all enabled.
 void vpn_reassert_default_route(void);
+
+// VPN LAN gateway hooks on the client tunnel netif (netif_hooks.c): NAT from
+// the tunnel to the uplink subnet, MSS clamping and Path MTU for LAN hosts.
+// install must run on the tcpip thread; remove before the tunnel goes down.
+struct netif;
+void vpn_gw_hooks_install(struct netif *wg);
+void vpn_gw_hooks_remove(void);
+bool vpn_gw_is_active(void);
 
 // Parse a standard WireGuard .conf file and persist the mapped vpn_* settings
 // to NVS (sets vpn_enabled=1 on success). Returns ESP_ERR_INVALID_ARG if a
