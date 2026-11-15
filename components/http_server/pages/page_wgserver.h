@@ -10,25 +10,25 @@
 </head>\
 <style>\
 * { box-sizing: border-box; margin: 0; padding: 0; }\
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #e0e0e0; padding: 1rem; min-height: 100vh; line-height: 1.6; }\
-h1 { font-size: 1.5rem; font-weight: 600; color: #00d9ff; margin: 0; }\
-h2 { font-size: 1.15rem; font-weight: 500; color: #00d9ff; margin: 1.5rem 0 0.75rem 0; padding-bottom: 0.5rem; border-bottom: 1px solid rgba(0, 217, 255, 0.2); }\
-#container { max-width: 760px; margin: 0 auto; padding: 1.5rem; background: rgba(30, 30, 46, 0.9); border-radius: 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); }\
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #2b1218 0%, #3d1620 100%); color: #e0e0e0; padding: 1rem; min-height: 100vh; line-height: 1.6; }\
+h1 { font-size: 1.5rem; font-weight: 600; color: #ff8a80; margin: 0; }\
+h2 { font-size: 1.15rem; font-weight: 500; color: #ff8a80; margin: 1.5rem 0 0.75rem 0; padding-bottom: 0.5rem; border-bottom: 1px solid rgba(255, 138, 128, 0.2); }\
+#container { max-width: 760px; margin: 0 auto; padding: 1.5rem; background: rgba(43, 18, 24, 0.9); border-radius: 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); }\
 table { width: 100%; border-collapse: collapse; }\
 td, th { padding: 0.45rem 0.4rem; vertical-align: top; text-align: left; font-size: 0.9rem; }\
-th { color: #888; font-weight: 500; border-bottom: 1px solid rgba(0, 217, 255, 0.2); }\
+th { color: #888; font-weight: 500; border-bottom: 1px solid rgba(255, 138, 128, 0.2); }\
 .f td:first-child { color: #888; width: 35%; text-align: right; padding-right: 0.75rem; }\
 .p td { border-bottom: 1px solid rgba(255, 255, 255, 0.05); white-space: nowrap; }\
 .p th { white-space: nowrap; }\
 .p td small { font-size: 0.75rem; }\
 .tw { overflow-x: auto; }\
-input[type='text'], input[type='number'], select { width: 100%; background: rgba(22, 33, 62, 0.6); border: 1px solid rgba(0, 217, 255, 0.2); border-radius: 8px; color: #e0e0e0; padding: 0.6rem; font-size: 0.9rem; }\
-select option { background: #16213e; color: #e0e0e0; }\
+input[type='text'], input[type='number'], select { width: 100%; background: rgba(61, 22, 32, 0.6); border: 1px solid rgba(255, 138, 128, 0.2); border-radius: 8px; color: #e0e0e0; padding: 0.6rem; font-size: 0.9rem; }\
+select option { background: #3d1620; color: #e0e0e0; }\
 input::placeholder { color: #666; }\
-.ok-button { border: none; border-radius: 8px; padding: 0.65rem 1.25rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; width: 100%; margin-top: 0.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }\
-.sb { border: 1px solid #00d9ff; background: none; color: #00d9ff; border-radius: 6px; padding: 0.2rem 0.6rem; font-size: 0.8rem; cursor: pointer; margin: 0 0.2rem 0.2rem 0; }\
+.ok-button { border: none; border-radius: 8px; padding: 0.65rem 1.25rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; width: 100%; margin-top: 0.5rem; background: linear-gradient(135deg, #e53950 0%, #8e1b3c 100%); color: #fff; }\
+.sb { border: 1px solid #ff8a80; background: none; color: #ff8a80; border-radius: 6px; padding: 0.2rem 0.6rem; font-size: 0.8rem; cursor: pointer; margin: 0 0.2rem 0.2rem 0; }\
 .sb.d { border-color: #ff5252; color: #ff5252; }\
-pre { background: rgba(22, 33, 62, 0.8); border: 1px solid rgba(0, 217, 255, 0.2); border-radius: 8px; padding: 0.75rem; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }\
+pre { background: rgba(61, 22, 32, 0.8); border: 1px solid rgba(255, 138, 128, 0.2); border-radius: 8px; padding: 0.75rem; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }\
 small { display: block; color: #888; font-size: 0.8rem; line-height: 1.4; }\
 #msg { margin: 0.75rem 0; font-size: 0.9rem; min-height: 1.2rem; }\
 </style>\
@@ -46,7 +46,7 @@ small { display: block; color: #888; font-size: 0.8rem; line-height: 1.4; }\
 <script>\
 function E(i){return document.getElementById(i);}\
 function v(i){return encodeURIComponent(E(i).value.trim());}\
-function api(b,cb){var m=E('msg');m.style.color='#00d9ff';m.textContent='Working...';\
+function api(b,cb){var m=E('msg');m.style.color='#ff8a80';m.textContent='Working...';\
 fetch('/api/wgserver',{method:'POST',body:b}).then(function(r){return r.json();}).then(function(d){\
 m.style.color=d.ok?'#4caf50':'#ff5252';m.textContent=d.msg;if(d.ok&&cb)cb(d);\
 }).catch(function(){m.style.color='#ff5252';m.textContent='Request failed';});}\
@@ -88,7 +88,7 @@ function dl(){var a=document.createElement('a');a.href=URL.createObjectURL(new B
 <small style='margin-top:0.5rem;'>Import this file in the WireGuard app. Reload the page to refresh the client list.</small>\
 </div>\
 <div style='margin-top: 1.5rem; text-align: center;'>\
-<a href='/' style='padding: 0.6rem 1.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border-radius: 8px; text-decoration: none; font-size: 0.9rem; font-weight: 600;'>Home</a>\
+<a href='/' style='padding: 0.6rem 1.5rem; background: linear-gradient(135deg, #e53950 0%, #8e1b3c 100%); color: #fff; border-radius: 8px; text-decoration: none; font-size: 0.9rem; font-weight: 600;'>Home</a>\
 </div>\
 </div>\
 </body>\

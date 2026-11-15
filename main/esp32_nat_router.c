@@ -1739,13 +1739,13 @@ void app_main(void)
     const char* prompt = LOG_COLOR_I "esp32> " LOG_RESET_COLOR;
 
     printf("\n"
-           "ESP32 NAT ROUTER\n"
+           "ESP32 VPN GATEWAY\n"
            "Type 'help' to get the list of commands.\n"
            "Use UP/DOWN arrows to navigate through command history.\n"
            "Press TAB when typing command name to auto-complete.\n");
 
 #if CONFIG_ETH_UPLINK
-    printf("\nESP32 Ethernet-to-WiFi NAT Router\n"
+    printf("\nESP32 Ethernet-to-WiFi VPN Gateway\n"
            "Configure AP using 'set_ap' and restart.\n");
 #else
     if (strlen(ssid) == 0) {

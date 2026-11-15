@@ -12,45 +12,45 @@
 </head>\
 <style>\
 * { box-sizing: border-box; margin: 0; padding: 0; }\
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #e0e0e0; padding: 1rem; min-height: 100vh; line-height: 1.6; }\
-h1 { font-size: 1.5rem; font-weight: 600; color: #00d9ff; margin-bottom: 1rem; text-shadow: 0 0 20px rgba(0, 217, 255, 0.3); }\
-h2 { font-size: 1.15rem; font-weight: 500; color: #00d9ff; margin: 1.5rem 0 0.75rem 0; padding-bottom: 0.5rem; border-bottom: 1px solid rgba(0, 217, 255, 0.2); }\
-#container { max-width: 800px; margin: 0 auto; padding: 1.5rem; background: rgba(30, 30, 46, 0.9); border-radius: 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); backdrop-filter: blur(10px); }\
-.nav-link { color: #00d9ff; text-decoration: none; font-size: 0.9rem; display: inline-block; margin-bottom: 1rem; transition: all 0.2s; }\
-.nav-link:hover { color: #33e0ff; transform: translateX(-3px); }\
-.data-table { width: 100%; border-collapse: collapse; margin: 1rem 0; background: rgba(22, 33, 62, 0.6); border-radius: 12px; overflow: hidden; border: 1px solid rgba(0, 217, 255, 0.1); }\
-.data-table thead { background: rgba(0, 217, 255, 0.1); }\
-.data-table th { padding: 0.75rem 0.5rem; text-align: left; font-weight: 600; color: #00d9ff; font-size: 0.9rem; }\
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #2b1218 0%, #3d1620 100%); color: #e0e0e0; padding: 1rem; min-height: 100vh; line-height: 1.6; }\
+h1 { font-size: 1.5rem; font-weight: 600; color: #ff8a80; margin-bottom: 1rem; text-shadow: 0 0 20px rgba(255, 138, 128, 0.3); }\
+h2 { font-size: 1.15rem; font-weight: 500; color: #ff8a80; margin: 1.5rem 0 0.75rem 0; padding-bottom: 0.5rem; border-bottom: 1px solid rgba(255, 138, 128, 0.2); }\
+#container { max-width: 800px; margin: 0 auto; padding: 1.5rem; background: rgba(43, 18, 24, 0.9); border-radius: 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); backdrop-filter: blur(10px); }\
+.nav-link { color: #ff8a80; text-decoration: none; font-size: 0.9rem; display: inline-block; margin-bottom: 1rem; transition: all 0.2s; }\
+.nav-link:hover { color: #ffaba3; transform: translateX(-3px); }\
+.data-table { width: 100%; border-collapse: collapse; margin: 1rem 0; background: rgba(61, 22, 32, 0.6); border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 138, 128, 0.1); }\
+.data-table thead { background: rgba(255, 138, 128, 0.1); }\
+.data-table th { padding: 0.75rem 0.5rem; text-align: left; font-weight: 600; color: #ff8a80; font-size: 0.9rem; }\
 .data-table td { padding: 0.75rem 0.5rem; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 0.9rem; }\
 .data-table td:first-child { color: #e0e0e0; text-align: left; width: auto; }\
 .data-table tbody tr:last-child td { border-bottom: none; }\
-.data-table tbody tr:hover { background: rgba(0, 217, 255, 0.05); }\
+.data-table tbody tr:hover { background: rgba(255, 138, 128, 0.05); }\
 table { width: 100%; border-collapse: collapse; }\
 td { padding: 0.5rem 0; vertical-align: top; }\
 td:first-child { color: #888; font-size: 0.9rem; padding-right: 0.75rem; width: 30%; text-align: right; }\
-input[type='text'], input[type='number'], select { width: 100%; background: rgba(22, 33, 62, 0.6); border: 1px solid rgba(0, 217, 255, 0.2); border-radius: 8px; color: #e0e0e0; padding: 0.75rem; font-size: 0.95rem; transition: all 0.3s; }\
-input[type='checkbox'] { -webkit-appearance: none; -moz-appearance: none; appearance: none; width: 18px; height: 18px; border: 2px solid rgba(0, 217, 255, 0.3); border-radius: 4px; background: rgba(22, 33, 62, 0.6); cursor: pointer; vertical-align: middle; position: relative; flex-shrink: 0; }\
-input[type='checkbox']:checked { background: #00d9ff; border-color: #00d9ff; }\
-input[type='checkbox']:checked::after { content: ''; position: absolute; left: 4px; top: 1px; width: 6px; height: 10px; border: solid #1a1a2e; border-width: 0 2px 2px 0; transform: rotate(45deg); }\
-input[type='checkbox']:focus { outline: none; border-color: #00d9ff; box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.1); }\
-input:focus, select:focus { outline: none; border-color: #00d9ff; box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.1); background: rgba(22, 33, 62, 0.8); }\
+input[type='text'], input[type='number'], select { width: 100%; background: rgba(61, 22, 32, 0.6); border: 1px solid rgba(255, 138, 128, 0.2); border-radius: 8px; color: #e0e0e0; padding: 0.75rem; font-size: 0.95rem; transition: all 0.3s; }\
+input[type='checkbox'] { -webkit-appearance: none; -moz-appearance: none; appearance: none; width: 18px; height: 18px; border: 2px solid rgba(255, 138, 128, 0.3); border-radius: 4px; background: rgba(61, 22, 32, 0.6); cursor: pointer; vertical-align: middle; position: relative; flex-shrink: 0; }\
+input[type='checkbox']:checked { background: #ff8a80; border-color: #ff8a80; }\
+input[type='checkbox']:checked::after { content: ''; position: absolute; left: 4px; top: 1px; width: 6px; height: 10px; border: solid #2b1218; border-width: 0 2px 2px 0; transform: rotate(45deg); }\
+input[type='checkbox']:focus { outline: none; border-color: #ff8a80; box-shadow: 0 0 0 3px rgba(255, 138, 128, 0.1); }\
+input:focus, select:focus { outline: none; border-color: #ff8a80; box-shadow: 0 0 0 3px rgba(255, 138, 128, 0.1); background: rgba(61, 22, 32, 0.8); }\
 input::placeholder { color: #666; }\
 select { cursor: pointer; }\
-.ok-button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; border-radius: 8px; padding: 0.75rem 1.5rem; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); width: 100%; margin-top: 0.5rem; }\
-.ok-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6); }\
-.red-button { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #fff; border: none; border-radius: 6px; padding: 0.4rem 0.8rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 2px 8px rgba(245, 87, 108, 0.4); text-decoration: none; display: inline-block; }\
-.red-button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(245, 87, 108, 0.6); }\
+.ok-button { background: linear-gradient(135deg, #e53950 0%, #8e1b3c 100%); color: #fff; border: none; border-radius: 8px; padding: 0.75rem 1.5rem; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 15px rgba(229, 57, 80, 0.4); width: 100%; margin-top: 0.5rem; }\
+.ok-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(229, 57, 80, 0.6); }\
+.red-button { background: linear-gradient(135deg, #ff8f3c 0%, #e53935 100%); color: #fff; border: none; border-radius: 6px; padding: 0.4rem 0.8rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 2px 8px rgba(229, 57, 53, 0.4); text-decoration: none; display: inline-block; }\
+.red-button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(229, 57, 53, 0.6); }\
 .section { margin-bottom: 2rem; }\
 @media (max-width: 768px) { body { padding: 0.5rem; } #container { padding: 1rem; border-radius: 12px; } h1 { font-size: 1.25rem; } h2 { font-size: 1rem; } .data-table { font-size: 0.8rem; display: block; overflow-x: auto; } .data-table th, .data-table td { padding: 0.5rem 0.25rem; font-size: 0.8rem; } td:first-child { font-size: 0.8rem; width: 35%; } input[type='text'], input[type='number'], select { font-size: 0.9rem; padding: 0.65rem; } }\
 .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }\
 .modal-overlay.show { display: flex; }\
-.modal-box { background: rgba(30, 30, 46, 0.98); border: 2px solid #f5576c; border-radius: 12px; padding: 1.5rem; max-width: 400px; text-align: center; box-shadow: 0 8px 32px rgba(245, 87, 108, 0.3); }\
-.modal-box h3 { color: #f5576c; margin-bottom: 1rem; }\
+.modal-box { background: rgba(43, 18, 24, 0.98); border: 2px solid #ff7043; border-radius: 12px; padding: 1.5rem; max-width: 400px; text-align: center; box-shadow: 0 8px 32px rgba(229, 57, 53, 0.3); }\
+.modal-box h3 { color: #ff7043; margin-bottom: 1rem; }\
 .modal-box p { color: #e0e0e0; margin-bottom: 1.5rem; }\
-.modal-box button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; border-radius: 8px; padding: 0.75rem 2rem; font-size: 1rem; cursor: pointer; }\
+.modal-box button { background: linear-gradient(135deg, #e53950 0%, #8e1b3c 100%); color: #fff; border: none; border-radius: 8px; padding: 0.75rem 2rem; font-size: 1rem; cursor: pointer; }\
 .green-button { background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%); color: #fff; border: none; border-radius: 6px; padding: 0.4rem 0.8rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4); text-decoration: none; display: inline-block; }\
-.select-button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; border-radius: 6px; padding: 0.4rem 0.8rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4); text-decoration: none; display: inline-block; }\
-.select-button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.6); }\
+.select-button { background: linear-gradient(135deg, #e53950 0%, #8e1b3c 100%); color: #fff; border: none; border-radius: 6px; padding: 0.4rem 0.8rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 2px 8px rgba(229, 57, 80, 0.4); text-decoration: none; display: inline-block; }\
+.select-button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(229, 57, 80, 0.6); }\
 .green-button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(76, 175, 80, 0.6); }\
 </style>\
 <script>\
@@ -197,7 +197,7 @@ Allow only known clients</label> \
 
 #define MAPPINGS_CHUNK_PAGE_FOOTER "\
 <div style='margin-top: 2rem; text-align: center;'>\
-<a href='/' style='padding: 0.75rem 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; border-radius: 8px; text-decoration: none; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); display: inline-block;'>&#127968; Home</a>\
+<a href='/' style='padding: 0.75rem 2rem; background: linear-gradient(135deg, #e53950 0%, #8e1b3c 100%); color: #fff; border: none; border-radius: 8px; text-decoration: none; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 15px rgba(229, 57, 80, 0.4); display: inline-block;'>&#127968; Home</a>\
 </div>\
 </div>\
 </body>\
