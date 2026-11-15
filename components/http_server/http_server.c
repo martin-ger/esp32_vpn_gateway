@@ -1408,11 +1408,11 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     /* Stream VPN status row */
     if (vpn_enabled) {
         if (vpn_is_connected()) {
-            snprintf(row, sizeof(row), "<tr><td>VPN:</td><td><span style='color: #4caf50;'>Connected</span></td></tr>");
+            snprintf(row, sizeof(row), "<tr><td>VPN Client:</td><td><span style='color: #4caf50;'>Connected</span></td></tr>");
         } else if (vpn_connected) {
-            snprintf(row, sizeof(row), "<tr><td>VPN:</td><td><span style='color: #ffc107;'>Handshake Pending</span></td></tr>");
+            snprintf(row, sizeof(row), "<tr><td>VPN Client:</td><td><span style='color: #ffc107;'>Handshake Pending</span></td></tr>");
         } else {
-            snprintf(row, sizeof(row), "<tr><td>VPN:</td><td><span style='color: #f44336;'>Disconnected</span></td></tr>");
+            snprintf(row, sizeof(row), "<tr><td>VPN Client:</td><td><span style='color: #f44336;'>Disconnected</span></td></tr>");
         }
         SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
     }
