@@ -6,15 +6,12 @@
 set -e  # Exit on any error
 
 # Build targets in order
-BUILD_ORDER=("esp32" "wt32_eth01" "esp32_poe_iso" "esp32s3" "esp32c5" "esp32c6" "esp32c3")
+BUILD_ORDER=("esp32" "wt32_eth01" "esp32_poe_iso" "esp32s3")
 
 # Target descriptions
 declare -A TARGET_DESC=(
     ["esp32"]="ESP32 (Original)"
     ["esp32s3"]="ESP32-S3"
-    ["esp32c6"]="ESP32-C6"
-    ["esp32c3"]="ESP32-C3"
-    ["esp32c5"]="ESP32-C5"
     ["wt32_eth01"]="WT32-ETH01 (Ethernet)"
     ["esp32_poe_iso"]="Olimex ESP32-POE-ISO (Ethernet)"
 )
@@ -23,9 +20,6 @@ declare -A TARGET_DESC=(
 declare -A TARGET_CHIP=(
     ["esp32"]="esp32"
     ["esp32s3"]="esp32s3"
-    ["esp32c6"]="esp32c6"
-    ["esp32c3"]="esp32c3"
-    ["esp32c5"]="esp32c5"
     ["wt32_eth01"]="esp32"
     ["esp32_poe_iso"]="esp32"
 )
@@ -38,9 +32,6 @@ declare -A TARGET_CHIP=(
 declare -A TARGET_SDKCONFIG=(
     ["esp32"]="sdkconfig.defaults"
     ["esp32s3"]="sdkconfig.defaults;sdkconfig.defaults.esp32s3"
-    ["esp32c6"]="sdkconfig.defaults;sdkconfig.defaults.esp32c6"
-    ["esp32c3"]="sdkconfig.defaults;sdkconfig.defaults.esp32c3"
-    ["esp32c5"]="sdkconfig.defaults;sdkconfig.defaults.esp32c5"
     ["wt32_eth01"]="sdkconfig.defaults;sdkconfig.defaults.eth_common;sdkconfig.defaults.wt32_eth01"
     ["esp32_poe_iso"]="sdkconfig.defaults;sdkconfig.defaults.eth_common;sdkconfig.defaults.esp32_poe_iso"
 )
@@ -50,9 +41,6 @@ declare -A TARGET_SDKCONFIG=(
 declare -A TARGET_BUILD_DIR=(
     ["esp32"]="build_esp32"
     ["esp32s3"]="build_esp32s3"
-    ["esp32c6"]="build_esp32c6"
-    ["esp32c3"]="build_esp32c3"
-    ["esp32c5"]="build_esp32c5"
     ["wt32_eth01"]="build_eth"
     ["esp32_poe_iso"]="build_poe_iso"
 )
@@ -60,9 +48,6 @@ declare -A TARGET_BUILD_DIR=(
 declare -A TARGET_SDKCONFIG_FILE=(
     ["esp32"]="sdkconfig.esp32"
     ["esp32s3"]="sdkconfig.esp32s3"
-    ["esp32c6"]="sdkconfig.esp32c6"
-    ["esp32c3"]="sdkconfig.esp32c3"
-    ["esp32c5"]="sdkconfig.esp32c5"
     ["wt32_eth01"]="sdkconfig.eth"
     ["esp32_poe_iso"]="sdkconfig.poe_iso"
 )
@@ -148,7 +133,7 @@ build_target() {
 }
 
 # Report how full the OTA slot is and warn when it is nearly exhausted. Without
-# this the C3 and C5 images crept to over 99% of ota_0 unnoticed.
+# this the images can creep to over 99% of ota_0 unnoticed.
 check_ota_headroom() {
     local target=$1
     local build_dir="${TARGET_BUILD_DIR[$target]:-build}"

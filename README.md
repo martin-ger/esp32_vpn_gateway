@@ -100,7 +100,6 @@ acl to_wg IP any 10.8.0.0/24 deny
 
 ### Limits
 
-- Not in the ESP32-C3, C5 and C6 firmware (not enough flash or RAM headroom).
 - The server and the WireGuard client are **mutually exclusive**: the server doesn't start while the client is enabled.
 - IPv4 only. The router must be reachable from the internet on the UDP port; an uplink behind carrier-grade NAT can't take incoming connections.
 
@@ -178,11 +177,8 @@ Details: [WireGuard VPN](https://github.com/martin-ger/esp32_nat_router/wiki/Wir
 | `esp32s3` | ESP32-S3 | WiFi | ✓ | ✓ |
 | `wt32_eth01` | ESP32 | Ethernet (LAN8720) | ✓ | ✓ |
 | `esp32_poe_iso` | ESP32 | Ethernet | ✓ | ✓ |
-| `esp32c3` | ESP32-C3 | WiFi | ✓ | – |
-| `esp32c5` | ESP32-C5 | WiFi (2.4 / 5 GHz) | ✓ | – |
-| `esp32c6` | ESP32-C6 | WiFi | ✓ | – |
 
-For a VPN gateway, a dual-core chip (**ESP32-S3** or **ESP32**) is the best choice: WireGuard encryption costs CPU time.
+All builds use dual-core chips (**ESP32-S3** or **ESP32**), because WireGuard encryption costs CPU time. The single-core ESP32-C3, C5 and C6 are not supported.
 
 ## Everything Else
 
