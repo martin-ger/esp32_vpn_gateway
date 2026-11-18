@@ -1,7 +1,7 @@
 ESP32 NAT Router Build Information
 =================================
 Target: WT32-ETH01 (Ethernet) (wt32_eth01)
-Build Time: 2026-11-13 09:45:44
-Git Hash: b618502
+Build Time: 2026-11-18 09:56:06
+Git Hash: 92a6f7f
 Binary Files: 4
 Build Directory: build_eth
