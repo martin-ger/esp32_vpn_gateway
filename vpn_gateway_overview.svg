@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>ESP32 VPN Gateway: WireGuard server, WireGuard client and LAN gateway</title>
+  <style>
+    .bg     { fill: #fbf6f6; stroke: #ead7d9; }
+    .node   { fill: #ffffff; stroke: #d9c2c5; }
+    .h      { fill: #2b1218; font-size: 17px; font-weight: 600; }
+    .t      { fill: #5a4a4d; font-size: 13px; }
+    .zone   { fill: #8a6f74; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; }
+    .esp    { fill: #1c0a0e; stroke: #e53950; stroke-width: 2; }
+    .blk    { fill: #3d1620; stroke: #8e1b3c; }
+    .eh     { fill: #ffffff; font-size: 15px; font-weight: 600; }
+    .et     { fill: #f2c4c8; font-size: 12px; }
+    .etitle { fill: #ff8a80; font-size: 19px; font-weight: 700; }
+    .lbl    { font-size: 12px; font-weight: 600; }
+    .srv    { stroke: #e53950; fill: none; stroke-width: 3; }
+    .cli    { stroke: #2f7fd8; fill: none; stroke-width: 3; }
+    .gw     { stroke: #2e9d57; fill: none; stroke-width: 3; }
+    .srvT   { fill: #c62840; }
+    .cliT   { fill: #2369b8; }
+    .gwT    { fill: #24804a; }
+    @media (prefers-color-scheme: dark) {
+      .bg   { fill: #160a0d; stroke: #3d1620; }
+      .node { fill: #24121a; stroke: #57303a; }
+      .h    { fill: #f4e6e8; }
+      .t    { fill: #c9b3b7; }
+      .zone { fill: #a88a90; }
+      .esp  { fill: #0d0507; }
+      .srvT { fill: #ff7085; }
+      .cliT { fill: #6fb0ff; }
+      .gwT  { fill: #5fd38a; }
+    }
+  </style>
+  <defs>
+    <marker id="aS" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#e53950"/></marker>
+    <marker id="aC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7fd8"/></marker>
+    <marker id="aG" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2e9d57"/></marker>
+  </defs>
+
+  <rect class="bg" x="1" y="1" width="958" height="598" rx="16"/>
+
+  <!-- zone captions -->
+  <text class="zone" x="140" y="46" text-anchor="middle">REMOTE / INTERNET</text>
+  <text class="zone" x="480" y="46" text-anchor="middle">GATEWAY</text>
+  <text class="zone" x="820" y="46" text-anchor="middle">LOCAL NETWORKS</text>
+
+  <!-- left: remote side -->
+  <rect class="node" x="30" y="80" width="220" height="120" rx="12"/>
+  <text class="h" x="140" y="118" text-anchor="middle">WireGuard apps</text>
+  <text class="t" x="140" y="142" text-anchor="middle">phones and laptops</text>
+  <text class="t" x="140" y="160" text-anchor="middle">on the road</text>
+  <text class="t" x="140" y="184" text-anchor="middle">(up to 8 peers)</text>
+
+  <rect class="node" x="30" y="300" width="220" height="150" rx="12"/>
+  <text class="h" x="140" y="336" text-anchor="middle">VPN provider or</text>
+  <text class="h" x="140" y="357" text-anchor="middle">your WG server</text>
+  <text class="t" x="140" y="384" text-anchor="middle">internet exit, or</text>
+  <text class="t" x="140" y="402" text-anchor="middle">laptops on your VPN</text>
+  <text class="t" x="140" y="420" text-anchor="middle">that need the remote LAN</text>
+
+  <!-- centre: the ESP32 -->
+  <rect class="esp" x="330" y="70" width="300" height="400" rx="16"/>
+  <text class="etitle" x="480" y="104" text-anchor="middle">ESP32 VPN Gateway</text>
+
+  <rect class="blk" x="355" y="125" width="250" height="70" rx="10"/>
+  <text class="eh" x="480" y="154" text-anchor="middle">WireGuard server</text>
+  <text class="et" x="480" y="175" text-anchor="middle">10.8.0.1 · keys + QR codes on device</text>
+
+  <rect class="blk" x="355" y="230" width="250" height="70" rx="10"/>
+  <text class="eh" x="480" y="259" text-anchor="middle">Router core</text>
+  <text class="et" x="480" y="280" text-anchor="middle">NAT · firewall (ACL) · MSS / Path MTU</text>
+
+  <rect class="blk" x="355" y="335" width="250" height="70" rx="10"/>
+  <text class="eh" x="480" y="364" text-anchor="middle">WireGuard client</text>
+  <text class="et" x="480" y="385" text-anchor="middle">kill switch · LAN gateway</text>
+
+  <text class="et" x="480" y="440" text-anchor="middle">ESP32 · ESP32-S3 · WT32-ETH01 · ESP32-POE-ISO</text>
+
+  <!-- right: local networks -->
+  <rect class="node" x="710" y="80" width="220" height="120" rx="12"/>
+  <text class="h" x="820" y="118" text-anchor="middle">AP network</text>
+  <text class="t" x="820" y="142" text-anchor="middle">192.168.4.0/24</text>
+  <text class="t" x="820" y="166" text-anchor="middle">IoT devices, sensors,</text>
+  <text class="t" x="820" y="184" text-anchor="middle">phones on the ESP32 WiFi</text>
+
+  <rect class="node" x="710" y="300" width="220" height="150" rx="12"/>
+  <text class="h" x="820" y="336" text-anchor="middle">Uplink LAN</text>
+  <text class="t" x="820" y="360" text-anchor="middle">WiFi (STA) or Ethernet</text>
+  <text class="t" x="820" y="384" text-anchor="middle">NAS, printer, controllers</text>
+  <text class="t" x="820" y="402" text-anchor="middle">main router → internet</text>
+
+  <!-- ① VPN server: apps dial in and reach the AP network -->
+  <path class="srv" d="M252,140 L353,160" marker-start="url(#aS)" marker-end="url(#aS)"/>
+  <text class="lbl srvT" x="292" y="130" text-anchor="middle">UDP 51820</text>
+  <path class="srv" d="M607,160 L708,140" marker-start="url(#aS)" marker-end="url(#aS)"/>
+  <text class="lbl srvT" x="658" y="132" text-anchor="middle">routed</text>
+  <path class="srv" d="M590,197 C590,215 660,250 708,330" stroke-dasharray="6 5" marker-end="url(#aS)"/>
+  <text class="lbl srvT" x="672" y="246" text-anchor="middle">NAT</text>
+
+  <!-- ② VPN client: AP traffic leaves through the tunnel -->
+  <path class="cli" d="M708,185 C670,185 650,265 607,265" marker-end="url(#aC)"/>
+  <path class="cli" d="M420,302 L420,333" marker-end="url(#aC)"/>
+  <path class="cli" d="M353,355 C310,355 300,345 252,345" marker-end="url(#aC)"/>
+  <text class="lbl cliT" x="300" y="336" text-anchor="middle">tunnel</text>
+
+  <!-- ③ LAN gateway: VPN machines reach the uplink LAN -->
+  <path class="gw" d="M252,410 C300,410 310,385 353,385" marker-end="url(#aG)"/>
+  <text class="lbl gwT" x="300" y="430" text-anchor="middle">tunnel</text>
+  <path class="gw" d="M607,385 C650,385 670,410 708,410" marker-end="url(#aG)"/>
+  <text class="lbl gwT" x="658" y="425" text-anchor="middle">NAT</text>
+
+  <!-- legend -->
+  <line class="srv" x1="40" y1="505" x2="80" y2="505"/>
+  <text class="t" x="92" y="510"><tspan class="lbl srvT">VPN server</tspan> – WireGuard apps dial in and reach the AP network (routed), the uplink LAN and the internet (NAT, dashed)</text>
+  <line class="cli" x1="40" y1="535" x2="80" y2="535"/>
+  <text class="t" x="92" y="540"><tspan class="lbl cliT">VPN client</tspan> – all traffic of the AP devices goes through the tunnel; the kill switch blocks it while the tunnel is down</text>
+  <line class="gw" x1="40" y1="565" x2="80" y2="565"/>
+  <text class="t" x="92" y="570"><tspan class="lbl gwT">LAN gateway</tspan> – machines on your VPN reach hosts on the uplink LAN, no route needed on the main router</text>
+</svg>

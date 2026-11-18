@@ -6,15 +6,7 @@ The ESP32 VPN Gateway is a firmware that turns a 2 $ ESP32 into a small **WireGu
 - **VPN server (inbound)**: phones and laptops connect *in* to the ESP32 with any WireGuard app and reach the AP network and the internet behind it.
 - **LAN gateway**: machines on the VPN reach hosts on the network the ESP32 is connected to, without touching that network's main router.
 
-```
-                          ┌──────────────── ESP32 VPN Gateway ────────────────┐
-  WireGuard apps ───────► │ WG server         AP 192.168.4.1 ◄──► AP clients  │
-  (phones, laptops)       │ 10.8.0.1                                          │
-                          │                                                   │
-  VPN provider / ◄──────► │ WG client         STA/ETH uplink ◄──► uplink LAN  │
-  own WG server           │                   (+ LAN gateway)   (NAS, printer)│
-                          └───────────────────────────────────────────────────┘
-```
+![ESP32 VPN Gateway: WireGuard server, WireGuard client and LAN gateway](vpn_gateway_overview.svg)
 
 Use cases:
 
@@ -100,6 +92,7 @@ acl to_wg IP any 10.8.0.0/24 deny
 
 ### Limits
 
+- **Limited performance**: the ESP32 encrypts all WireGuard traffic in software, so throughput is a small fraction of what a PC or a dedicated router achieves, and it shares the CPU with NAT routing. The gateway is meant mainly for reaching IoT networks with low traffic demands (sensors, controllers, web UIs, SSH), not for streaming, large downloads or many simultaneous users.
 - The server and the WireGuard client are **mutually exclusive**: the server doesn't start while the client is enabled.
 - IPv4 only. The router must be reachable from the internet on the UDP port; an uplink behind carrier-grade NAT can't take incoming connections.
 
@@ -161,6 +154,42 @@ set_vpn -k ""              Remove the preshared key
 ```
 
 Details: [WireGuard VPN](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-VPN) in the wiki.
+
+## Security
+
+With the WireGuard server on, the ESP32 has a UDP port open to the internet. The firmware is built with that in mind, but it is a small, low-cost device: configure it carefully and keep the exposed surface to that one port.
+
+### Security features of the build
+
+- **Stack canaries**: all builds are compiled with GCC stack protection (`CONFIG_COMPILER_STACK_CHECK_MODE_NORM`, set in `sdkconfig.defaults.esp32` and `sdkconfig.defaults.esp32s3`). Functions with local buffers get a canary value before their return address; a stack buffer overflow overwrites it, and the ESP32 panics and reboots instead of running injected code. This turns the most common memory-corruption bug in packet and config parsing into a denial of service rather than a takeover.
+- **Task stack checks**: FreeRTOS checks a canary at the end of each task stack on every context switch and halts on overflow.
+- **Memory protection** (ESP32-S3): data RAM is not executable and instruction RAM is not writable (`CONFIG_ESP_SYSTEM_MEMPROT_FEATURE`), which blocks injected code from running.
+- **WireGuard**: the server answers only peers that know their key pair; packets from anyone else are silently dropped, so a port scan shows nothing. Optional preshared keys per peer add a second, symmetric secret. Replay protection survives reboots.
+- **Keys**: client private keys generated on the device are shown once and never stored or logged. The server's peer table with the preshared keys, the WiFi passwords and the WireGuard private keys are left out of plain-text config exports; encrypted exports (XChaCha20-Poly1305, passphrase via PBKDF2) include them.
+- **Passwords** for the web UI and remote console are stored as salted SHA-256 hashes.
+
+Not included: the web UI and remote console use plain HTTP and TCP (no TLS), and secure boot and flash encryption are off. WiFi passwords and WireGuard keys are stored unencrypted in flash, so physical access to the device means access to them.
+
+### Secure configuration
+
+1. **Set a password** for the web UI and remote console:
+   ```
+   set_router_password <strong-password>
+   ```
+2. **Keep management off the uplink.** Allow the web UI only from the AP network, or only through the VPN (`vpn` covers both the client tunnel and the server tunnel address 10.8.0.1). Switch off the remote console if you don't use it:
+   ```
+   web_ui bind vpn                  # or: web_ui bind ap
+   remote_console disable           # or: remote_console bind vpn
+   ```
+3. **Forward only the WireGuard port** (UDP 51820) on your internet router. Never forward port 80 or 2323 to the ESP32.
+4. **One key pair per device**, with a preshared key (`wg_server peer add <name> -p`). Remove lost or retired devices at once (`wg_server peer del <name>`), and use split-tunnel configs (`-s`) for clients that don't need the internet through the ESP32.
+5. **Restrict what VPN clients reach.** Access to the uplink LAN is always on; limit it, and the AP network, with `to_wg` rules (see [Firewall for the tunnel](#firewall-for-the-tunnel)).
+6. **Leave the LAN gateway off** unless you need it, and use it only with a VPN server you control.
+7. **Keep the kill switch on** (default) when the AP devices must never leave the tunnel.
+8. **Encrypt config backups**: enter a passphrase before exporting.
+9. **Physical security**: if others can get hold of the device, build with flash encryption and secure boot, and run `esptool.py erase_flash` before passing it on (re-flashing alone keeps the stored keys).
+
+More in [Security](https://github.com/martin-ger/esp32_nat_router/wiki/Security) in the NAT router wiki.
 
 ## Other Changes
 
