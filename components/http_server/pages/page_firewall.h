@@ -10,7 +10,7 @@
 </head>\
 <style>\
 * { box-sizing: border-box; margin: 0; padding: 0; }\
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #2b1218 0%, #3d1620 100%); color: #e0e0e0; padding: 1rem; min-height: 100vh; line-height: 1.6; }\
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #0d0507 0%, #170a0d 100%); color: #e0e0e0; padding: 1rem; min-height: 100vh; line-height: 1.6; }\
 h1 { font-size: 1.5rem; font-weight: 600; color: #ff8a80; margin-bottom: 1rem; text-shadow: 0 0 20px rgba(255, 138, 128, 0.3); }\
 h2 { font-size: 1.1rem; font-weight: 500; color: #ff8a80; margin: 1.2rem 0 0.5rem 0; padding-bottom: 0.3rem; border-bottom: 1px solid rgba(255, 138, 128, 0.2); }\
 h3 { font-size: 0.95rem; font-weight: 500; color: #ffb199; margin: 0.8rem 0 0.3rem 0; }\

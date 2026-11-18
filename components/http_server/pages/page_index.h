@@ -24,7 +24,7 @@ padding: 0;\
 \
 body {\
 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;\
-background: linear-gradient(135deg, #2b1218 0%, #3d1620 100%);\
+background: linear-gradient(135deg, #0d0507 0%, #170a0d 100%);\
 color: #e0e0e0;\
 padding: 1rem;\
 min-height: 100vh;\
