@@ -23,7 +23,7 @@ Use cases:
 | WireGuard server | – | ✓ up to 8 clients, keys, configs and QR codes generated on the device (ESP32, ESP32-S3, WT32-ETH01, ESP32-POE-ISO) |
 | Firewall | ACL lists `to_esp`, `from_esp`, `to_ap`, `from_ap` | adds `to_wg` / `from_wg` for the server tunnel |
 | Packet capture | AP and uplink | also the decrypted server tunnel traffic |
-| MQTT / Home Assistant | router and client telemetry | adds VPN status, number of VPN clients, CPU temperature |
+| MQTT | HA telemetry client publishing to an external broker | built-in **local MQTT broker** for LAN devices (see [MQTT Broker](#mqtt-broker)) |
 | Web UI | blue/purple theme | red theme, new **🔐 VPN Server** page, VPN server status on the index page |
 | Name | "ESP32 NAT Router" | "ESP32 VPN Gateway" on the index page and in the serial and remote console banners |
 
@@ -155,6 +155,24 @@ set_vpn -k ""              Remove the preshared key
 
 Details: [WireGuard VPN](https://github.com/martin-ger/esp32_nat_router/wiki/WireGuard-VPN) in the wiki.
 
+## MQTT Broker
+
+The gateway runs its own **local MQTT broker** (an [Espressif port of Mosquitto](https://components.espressif.com/components/espressif/mosquitto)), so devices can talk MQTT without an external broker — e.g. Home Assistant, Tasmota or ESPHome devices:
+
+- **Pick the interface**: the listener binds to the IP of exactly one interface — **AP** (default: `mqtt://192.168.4.1:1883`, LAN only, not reachable from the uplink or the internet), **STA** (the uplink network) or **VPN** (the tunnel, for clients behind the WireGuard VPN). While the chosen interface has no IP, the broker waits.
+- **Optional authentication**: without a configured user the broker is open; with a user, every connection must present that user and password.
+- **No TLS** transport in this port.
+
+```
+mqtt enable
+mqtt bind ap                 # or: sta / vpn
+mqtt user ha <password>      # or: mqtt user off  (open broker)
+mqtt port 1883
+mqtt status
+```
+
+The **MQTT Broker** section on the Configuration page does the same. The broker is off by default; only while it is running does it use RAM (an 8 kB task stack plus ~4 kB heap per connected client).
+
 ## Security
 
 With the WireGuard server on, the ESP32 has a UDP port open to the internet. The firmware is built with that in mind, but it is a small, low-cost device: configure it carefully and keep the exposed surface to that one port.
@@ -219,7 +237,7 @@ All other features come unchanged from the ESP32 NAT Router. In short:
 - WPA2-Enterprise uplink (PEAP, TTLS, TLS)
 - Web UI with password protection, serial console, remote console (TCP)
 - LED and LED strip status, OLED display
-- MQTT with Home Assistant discovery, syslog
+- syslog
 - MCP bridge for AI assistants
 - OTA updates from the web UI, configuration backup and restore
 

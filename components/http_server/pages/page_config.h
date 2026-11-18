@@ -172,6 +172,31 @@ setTimeout(\"location.href = '/'\", 10000);\
 </table>\
 </form>"
 
+/* MQTT Broker section - uses: mb_en_chk, mb_dis_chk, mb_color, mb_status,
+   mb_port, mb_bind_ap_chk, mb_bind_sta_chk, mb_bind_vpn_chk, mb_user */
+#define CONFIG_CHUNK_MB "\
+<h2>MQTT Broker</h2>\
+<form action='' method='GET'>\
+<input type='hidden' name='mb_save' value='1'/>\
+<table>\
+<tr><td>Service</td><td>\
+<label style='margin-right: 1rem;'><input type='radio' name='mb_enabled' value='1' %s> Enabled</label>\
+<label><input type='radio' name='mb_enabled' value='0' %s> Disabled</label>\
+</td></tr>\
+<tr><td>Status</td><td><strong style='color: %s;'>%s</strong></td></tr>\
+<tr><td>Port</td><td><input type='number' name='mb_port' value='%d' min='1' max='65535' style='width: 100px;'/></td></tr>\
+<tr><td>Bind</td><td>\
+<label style='margin-right: 0.8rem;'><input type='radio' name='mb_bind' value='ap' %s> AP</label>\
+<label style='margin-right: 0.8rem;'><input type='radio' name='mb_bind' value='sta' %s> STA</label>\
+<label><input type='radio' name='mb_bind' value='vpn' %s> VPN</label>\
+</td></tr>\
+<tr><td>Username</td><td><input type='text' name='mb_user' value='%s' placeholder='empty = open broker'/></td></tr>\
+<tr><td>Password</td><td><input type='password' name='mb_pass' placeholder='unchanged (empty = no password)'/></td></tr>\
+<tr><td></td><td><input type='submit' value='Save' class='ok-button'/></td></tr>\
+</table>\
+<small>Built-in MQTT broker for LAN clients (no TLS). The listener binds to the IP of the selected interface.</small>\
+</form>"
+
 /* PCAP section - uses: pcap_off/acl/promisc_sel, pcap_color, pcap_status, captured, dropped, snaplen, sta_ip */
 #define CONFIG_CHUNK_PCAP "\
 <h2>PCAP Packet Capture</h2>\

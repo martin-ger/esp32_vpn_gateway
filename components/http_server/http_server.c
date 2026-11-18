@@ -43,6 +43,7 @@
 #include "pcap_capture.h"
 #include "acl.h"
 #include "remote_console.h"
+#include "mqtt_broker.h"
 #include "cJSON.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
@@ -614,7 +615,8 @@ static char *nvs_export_to_json_robust(bool include_secrets)
          *   web_password — salt:hash of the web UI password. Exporting it put
          *                  the hash in a plaintext file anyone could take away
          *                  and grind offline.
-         *   mqtt_pass    — MQTT broker credential
+         *   mqtt_pass    — MQTT broker credential (legacy client key)
+         *   mb_pass      — built-in MQTT broker credential
          *   wgs_privkey  — WireGuard server private key
          *   wgs_peers    — WireGuard server peer table: holds the clients'
          *                  preshared keys, and is of little use without the
@@ -626,6 +628,7 @@ static char *nvs_export_to_json_robust(bool include_secrets)
              strcmp(info.key, "vpn_psk")      == 0 ||
              strcmp(info.key, "web_password") == 0 ||
              strcmp(info.key, "mqtt_pass")    == 0 ||
+             strcmp(info.key, "mb_pass")      == 0 ||
              strcmp(info.key, "wgs_privkey")  == 0 ||
              strcmp(info.key, "wgs_peers")    == 0)) {
             err = nvs_entry_next(&it);
@@ -2001,6 +2004,64 @@ static esp_err_t config_get_handler(httpd_req_t *req)
                 return ESP_OK;
             }
 
+#if CONFIG_MQTT_BROKER
+            /* Handle MQTT Broker settings (single form) */
+            if (httpd_query_key_value(buf, "mb_save", param1, sizeof(param1)) == ESP_OK) {
+                /* Enable/disable */
+                if (httpd_query_key_value(buf, "mb_enabled", param1, sizeof(param1)) == ESP_OK) {
+                    preprocess_string(param1);
+                    if (strcmp(param1, "1") == 0) {
+                        mqtt_broker_enable();
+                    } else {
+                        mqtt_broker_disable();
+                    }
+                }
+                /* Port */
+                if (httpd_query_key_value(buf, "mb_port", param1, sizeof(param1)) == ESP_OK) {
+                    preprocess_string(param1);
+                    int port = atoi(param1);
+                    if (port >= 1 && port <= 65535) {
+                        mqtt_broker_set_port((uint16_t)port);
+                    }
+                }
+                /* Bind interface (single-select; the broker listener binds
+                 * to the IP of the chosen interface) */
+                if (httpd_query_key_value(buf, "mb_bind", param1, sizeof(param1)) == ESP_OK) {
+                    preprocess_string(param1);
+                    uint8_t b;
+                    if (strcmp(param1, "sta") == 0) {
+                        b = RC_BIND_STA;
+                    } else if (strcmp(param1, "vpn") == 0) {
+                        b = RC_BIND_VPN;
+                    } else {
+                        b = RC_BIND_AP;
+                    }
+                    mqtt_broker_set_bind(b);
+                }
+                /* Credentials: empty username opens the broker, empty
+                 * password keeps the current one */
+                char mb_user[64] = "";
+                char mb_pass[64] = "";
+                if (httpd_query_key_value(buf, "mb_user", mb_user, sizeof(mb_user)) == ESP_OK) {
+                    preprocess_string(mb_user);
+                }
+                if (httpd_query_key_value(buf, "mb_pass", mb_pass, sizeof(mb_pass)) == ESP_OK) {
+                    preprocess_string(mb_pass);
+                }
+                if (mb_user[0] == '\0') {
+                    mqtt_broker_set_credentials("", "");
+                } else {
+                    mqtt_broker_set_credentials(mb_user, mb_pass[0] ? mb_pass : NULL);
+                }
+                ESP_LOGI(TAG, "MQTT broker settings saved via web");
+                free(buf);
+                httpd_resp_set_status(req, "303 See Other");
+                httpd_resp_set_hdr(req, "Location", "/config");
+                httpd_resp_send(req, NULL, 0);
+                return ESP_OK;
+            }
+#endif
+
             /* Handle PCAP settings (single form) */
             if (httpd_query_key_value(buf, "pcap_save", param1, sizeof(param1)) == ESP_OK) {
                 if (httpd_query_key_value(buf, "pcap_mode", param1, sizeof(param1)) == ESP_OK) {
@@ -2246,6 +2307,45 @@ static esp_err_t config_get_handler(httpd_req_t *req)
         rc_ap_chk, rc_sta_chk, rc_vpn_chk,
         (unsigned long)rc_config.idle_timeout_sec);
     SEND_CHUNK(req, section, HTTPD_RESP_USE_STRLEN);
+
+#if CONFIG_MQTT_BROKER
+    /* Chunk 7b: MQTT Broker */
+    mqtt_broker_info_t mb_info;
+    mqtt_broker_get_info(&mb_info);
+    const char* mb_enabled_checked = mb_info.enabled ? "checked" : "";
+    const char* mb_disabled_checked = mb_info.enabled ? "" : "checked";
+    const char* mb_bind_name = mb_info.bind == RC_BIND_STA ? "STA"
+                        : mb_info.bind == RC_BIND_VPN ? "VPN" : "AP";
+    const char* mb_status_color;
+    char mb_status_buf[80];
+    const char* mb_status_text;
+    if (!mb_info.enabled) {
+        mb_status_color = "#888";
+        mb_status_text = "Disabled";
+    } else if (mb_info.running) {
+        mb_status_color = "#4caf50";
+        snprintf(mb_status_buf, sizeof(mb_status_buf),
+                 "Listening on %s:%u (%s)", mb_info.listen_addr,
+                 mb_info.port, mb_bind_name);
+        mb_status_text = mb_status_buf;
+    } else {
+        mb_status_color = "#ffc107";
+        snprintf(mb_status_buf, sizeof(mb_status_buf),
+                 "Waiting for %s interface", mb_bind_name);
+        mb_status_text = mb_status_buf;
+    }
+    char mb_user_esc[96];
+    html_escape_to(mb_user_esc, sizeof(mb_user_esc), mb_info.user);
+    snprintf(section, sizeof(section), CONFIG_CHUNK_MB,
+        mb_enabled_checked, mb_disabled_checked,
+        mb_status_color, mb_status_text,
+        mb_info.port,
+        mb_info.bind == RC_BIND_AP ? "checked" : "",
+        mb_info.bind == RC_BIND_STA ? "checked" : "",
+        mb_info.bind == RC_BIND_VPN ? "checked" : "",
+        mb_user_esc);
+    SEND_CHUNK(req, section, HTTPD_RESP_USE_STRLEN);
+#endif
 
     /* Chunk 8: PCAP */
     char sta_ip_str[16];

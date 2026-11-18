@@ -71,8 +71,8 @@
 #if !defined(CONFIG_IDF_TARGET_ESP32C5)
 #include "mdns.h"
 #endif
-#if CONFIG_MQTT_HOMEASSISTANT
-#include "mqtt_ha.h"
+#if CONFIG_MQTT_BROKER
+#include "mqtt_broker.h"
 #endif
 
 // Byte counting variables
@@ -854,6 +854,11 @@ void ap_set_enabled(bool enabled)
 #endif
     ap_disabled = !enabled;
     set_config_param_int("ap_disabled", ap_disabled ? 1 : 0);
+#if CONFIG_MQTT_BROKER
+    /* The MQTT broker binds to the AP IP: drop its listener so it
+     * re-binds (or waits) once the AP interface is back up. */
+    mqtt_broker_rebind();
+#endif
     ESP_LOGI(TAG, "AP interface %s", enabled ? "enabled" : "disabled");
 }
 
@@ -1734,8 +1739,8 @@ void app_main(void)
     register_system();
     register_router();
 
-#if CONFIG_MQTT_HOMEASSISTANT
-    mqtt_ha_init();
+#if CONFIG_MQTT_BROKER
+    mqtt_broker_init();
 #endif
 
     /* Prompt to be printed before each line.

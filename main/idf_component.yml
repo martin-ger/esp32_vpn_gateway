@@ -7,6 +7,8 @@ dependencies:
   # Registry components are pinned to exact versions so a build does not change
   # with whatever is newest that day (dependencies.lock is not tracked).
   espressif/led_strip: '3.1.1'
+  # Mosquitto broker port (runs an MQTT broker on the router)
+  espressif/mosquitto: '2.0.20~9'
   espressif/mdns:
     version: '1.15.1'
     rules:

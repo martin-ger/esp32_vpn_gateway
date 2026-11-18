@@ -188,7 +188,7 @@ static bool is_secret_param(const char *name)
 {
     static const char *const secrets[] = {
         "passwd", "ap_passwd", "vpn_privkey", "vpn_psk", "web_password", "mqtt_pass",
-        "wgs_privkey", "wgs_peers"
+        "mb_pass", "wgs_privkey", "wgs_peers"
     };
     for (size_t i = 0; i < sizeof(secrets) / sizeof(secrets[0]); i++) {
         if (strcmp(name, secrets[i]) == 0) return true;

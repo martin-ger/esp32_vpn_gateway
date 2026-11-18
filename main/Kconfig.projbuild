@@ -52,26 +52,17 @@ menu "NAT Router Uplink"
 
 endmenu
 
-menu "MQTT Home Assistant"
+menu "MQTT Broker"
 
-    config MQTT_HOMEASSISTANT
-        bool "Enable MQTT Home Assistant integration"
+    config MQTT_BROKER
+        bool "Enable built-in MQTT broker"
         default y
         help
-            Publishes router telemetry to an MQTT broker with
-            Home Assistant auto-discovery. Adds ~58 KB flash.
-            RAM is only used when a broker is configured and enabled.
-
-    config MQTT_HA_BUFFER_SIZE
-        int "MQTT buffer size (bytes)"
-        default 1024
-        depends on MQTT_HOMEASSISTANT
-
-    config MQTT_DEFAULT_INTERVAL
-        int "Default publish interval (seconds)"
-        default 30
-        depends on MQTT_HOMEASSISTANT
-        range 5 3600
+            Runs a local MQTT broker (espressif/mosquitto port) bound to
+            the AP interface, e.g. mqtt://192.168.1.1:1883. Only LAN
+            clients can reach it; no TLS transport in this port.
+            Off at runtime until 'mqtt enable'. Adds ~60 KB flash;
+            ~2 kB heap plus ~4 kB per connected client.
 
 endmenu
 
