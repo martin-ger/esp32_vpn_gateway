@@ -326,30 +326,73 @@ static void mb_on_message(char *client, char *topic, char *data, int len,
  *  Broker task
  * ================================================================ */
 
-/* True if a TCP listener could bind 0.0.0.0:port right now, the way the
- * port opens its listener (IPv4, SO_REUSEADDR).
+/* Try to bind and listen on the port with one socket family, the way the
+ * port opens its listener (SO_REUSEADDR). True if that worked or could not
+ * be tried (no free socket: let the broker attempt it). */
+static bool mb_probe_listen(int family, uint16_t port)
+{
+    int s = socket(family, SOCK_STREAM, IPPROTO_TCP);
+    if (s < 0) {
+        return true;
+    }
+    int one = 1;
+    (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    int rc;
+#if CONFIG_LWIP_IPV6
+    if (family == AF_INET6) {
+        struct sockaddr_in6 addr6 = {
+            .sin6_family = AF_INET6,
+            .sin6_port = htons(port),
+            .sin6_addr = IN6ADDR_ANY_INIT,
+        };
+        rc = bind(s, (struct sockaddr *)&addr6, sizeof(addr6));
+    } else
+#endif
+    {
+        struct sockaddr_in addr = {
+            .sin_family = AF_INET,
+            .sin_port = htons(port),
+            .sin_addr.s_addr = htonl(INADDR_ANY),
+        };
+        rc = bind(s, (struct sockaddr *)&addr, sizeof(addr));
+    }
+    if (rc == 0) {
+        rc = listen(s, 1);
+    }
+    close(s);
+    return rc == 0;
+}
+
+/* True if the broker could listen on the port right now without sharing
+ * it with another service.
  *
  * mosq_broker_run() leaks its partly built state (topic tree, listener
  * array) when it cannot open the listener, so it must not be retried in a
  * loop against a port another service holds (web server, remote console,
- * PCAP stream, ...). Probing first costs nothing: a socket that never
- * listened is freed on close. */
+ * PCAP stream, ...). Probing costs nothing: a closed listening socket is
+ * freed at once (a connection arriving in that instant is reset).
+ *
+ * The services set SO_REUSEADDR like mosquitto does, so with lwIP the clash
+ * shows only at listen(), not bind(), and only between listeners of the
+ * same address type:
+ *  - IPv4 0.0.0.0 is what mosquitto opens; it clashes with IPv4 listeners
+ *    such as the remote console.
+ *  - The web server (esp_http_server) listens on IPv6 "::", which lwIP
+ *    makes dual-stack. mosquitto's IPv4 listener on the same port does
+ *    *not* fail; both then get IPv4 connections and the web UI breaks
+ *    intermittently. The "::" probe catches that. */
 static bool mb_port_free(uint16_t port)
 {
-    int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s < 0) {
-        return true;  /* cannot tell (no free socket): let the broker try */
+    if (!mb_probe_listen(AF_INET, port)) {
+        return false;
     }
-    int one = 1;
-    (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(port),
-        .sin_addr.s_addr = htonl(INADDR_ANY),
-    };
-    bool ok = (bind(s, (struct sockaddr *)&addr, sizeof(addr)) == 0);
-    close(s);
-    return ok;
+#if CONFIG_LWIP_IPV6
+    if (!mb_probe_listen(AF_INET6, port)) {
+        return false;
+    }
+#endif
+    return true;
 }
 
 /* vTaskDelay() that returns early when the task is asked to exit, so a
