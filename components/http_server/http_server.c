@@ -1436,6 +1436,18 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     }
 #endif
 
+#if CONFIG_MQTT_BROKER
+    /* Stream MQTT broker status row (only while it is actually listening) */
+    mqtt_broker_info_t mb_status;
+    mqtt_broker_get_info(&mb_status);
+    if (mb_status.running) {
+        snprintf(row, sizeof(row),
+                 "<tr><td>MQTT Broker:</td><td><span style='color: #4caf50;'>Running</span> (%s)</td></tr>",
+                 mb_status.bind_desc);
+        SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+    }
+#endif
+
     /* Stream Bytes row (sent/received combined) */
     uint64_t bytes_sent = get_sta_bytes_sent();
     uint64_t bytes_received = get_sta_bytes_received();
