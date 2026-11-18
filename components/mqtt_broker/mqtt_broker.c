@@ -724,8 +724,21 @@ static void register_mqtt_cmd(void)
 
     const esp_console_cmd_t cmd = {
         .command = "mqtt",
-        .help = "Built-in MQTT broker (LAN)",
-        .hint = NULL,
+        /* Note: the console help formatter (arg_print_formatted) wraps at
+         * 78 columns and prints a stray line for 72-78-column lines —
+         * keep every line at 71 columns or less. */
+        .help = "Manage the built-in MQTT broker\n"
+                "  mqtt status                 - Show status (bind, port, messages)\n"
+                "  mqtt enable                 - Start broker\n"
+                "  mqtt disable                - Stop broker\n"
+                "  mqtt port <port>            - Set TCP port (default: 1883)\n"
+#if CONFIG_ETH_UPLINK
+                "  mqtt bind <ap,eth,vpn|all>  - Set served interfaces (immediate)\n"
+#else
+                "  mqtt bind <ap,sta,vpn|all>  - Set served interfaces (immediate)\n"
+#endif
+                "  mqtt user <user> [pass]     - Set auth user ('off' = open broker)",
+        .hint = " <action> [<args>]",
         .func = &mqtt_cmd,
         .argtable = &mb_args,
     };
