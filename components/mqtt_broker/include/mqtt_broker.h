@@ -22,13 +22,15 @@ typedef struct {
     bool enabled;        /* persisted in NVS */
     bool running;        /* broker main loop currently active */
     uint16_t port;
-    uint8_t bind;        /* interface the listener is bound to:
-                           * RC_BIND_AP / RC_BIND_STA / RC_BIND_VPN
+    uint8_t bind;        /* bitmask of interfaces served:
+                           * RC_BIND_AP | RC_BIND_STA | RC_BIND_VPN
                            * (see remote_console.h) */
+    char bind_desc[24];  /* bind bitmask as text ("AP, VPN") */
     bool auth_required;  /* a broker user is configured */
     uint32_t messages;   /* total messages processed by the broker */
     char user[32];       /* configured username ("" = open broker) */
-    char listen_addr[16];/* current listen address ("x.x.x.x" or "") */
+    char listen_addr[64];/* IPs of the selected interfaces that are up
+                          * ("1.2.3.4, 5.6.7.8"), "" if none */
 } mqtt_broker_info_t;
 
 /**
@@ -49,10 +51,13 @@ esp_err_t mqtt_broker_disable(void);
 esp_err_t mqtt_broker_set_port(uint16_t port);
 
 /**
- * @brief Set which interface the listener is bound to: RC_BIND_AP
- *        (default, LAN), RC_BIND_STA (uplink) or RC_BIND_VPN (tunnel).
- *        Rebinds the running broker. While the selected interface has no
- *        IP (e.g. VPN down), the broker waits.
+ * @brief Set which interfaces the broker serves: any combination of
+ *        RC_BIND_AP (default, LAN), RC_BIND_STA (uplink) and RC_BIND_VPN
+ *        (tunnel) — at least one bit must be set. Connections arriving on
+ *        unselected interfaces are rejected at the TCP level. The change
+ *        takes effect immediately without restarting the listener. While
+ *        none of the selected interfaces has an IP (e.g. VPN down), the
+ *        broker waits.
  */
 esp_err_t mqtt_broker_set_bind(uint8_t bind);
 

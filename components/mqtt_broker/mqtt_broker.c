@@ -1,8 +1,10 @@
 /* Built-in MQTT broker (espressif/mosquitto port).
  *
- * Runs a local MQTT broker on the router's AP (LAN) interface so devices in
- * the local network can publish/subscribe without an external broker. The
- * listener is bound to the router's AP IP, so only LAN clients can reach it.
+ * Runs a local MQTT broker on the router so devices can publish/subscribe
+ * without an external broker. The listener is bound to 0.0.0.0 and every
+ * accepted connection is filtered at the TCP level by the interface IP it
+ * arrived on (same model as the remote console): only connections coming in
+ * on the selected interfaces (AP / STA / VPN, any combination) are served.
  * Compile-time guarded by CONFIG_MQTT_BROKER.
  *
  * SPDX-License-Identifier: MIT
@@ -14,6 +16,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include "mqtt_broker.h"
 #include "mosq_broker.h"
@@ -58,7 +62,12 @@ static const char *TAG = "mqtt_broker";
 /* ---------- Runtime state ---------- */
 static bool      s_enabled = false;
 static uint16_t  s_port    = MB_DEFAULT_PORT;
-static uint8_t   s_bind    = RC_BIND_AP;
+
+/* Bitmask of RC_BIND_* (see remote_console.h): the listener serves all
+ * selected interfaces at once. Written by console/HTTP tasks, read by the
+ * broker task in the accept filter (single byte: reads are atomic). */
+static volatile uint8_t s_bind = RC_BIND_AP;
+
 static char      s_user[MB_CRED_MAX] = "";
 static char      s_pass[MB_CRED_MAX] = "";
 
@@ -71,14 +80,12 @@ static struct {
     volatile bool running;   /* broker main loop active */
     volatile bool shutdown;  /* task should exit */
     volatile bool rebind;    /* stop + restart with current settings */
-    volatile uint32_t bound_ip;  /* IP the listener currently binds to */
     uint32_t messages;       /* total messages processed */
 } s_state = {
     .task = NULL,
     .running = false,
     .shutdown = false,
     .rebind = false,
-    .bound_ip = 0,
     .messages = 0,
 };
 
@@ -86,11 +93,10 @@ static struct {
  *  Helpers
  * ================================================================ */
 
-/* IP the listener should bind to, per the selected interface. 0 = that
- * interface currently has no IP (broker waits). */
-static uint32_t get_bind_target_ip(void)
+/* IP of one interface (network byte order), 0 = currently no IP. */
+static uint32_t bind_ip_for(uint8_t flag)
 {
-    switch (s_bind) {
+    switch (flag) {
     case RC_BIND_STA:
         return my_ip;
     case RC_BIND_VPN:
@@ -100,30 +106,123 @@ static uint32_t get_bind_target_ip(void)
         }
 #endif
         return vpn_tunnel_ip;
-    default:
+    default:  /* RC_BIND_AP */
         /* my_ap_ip is only ever set at init, so fold the AP-disabled state
          * in here: without the interface, the address is unreachable. */
         return ap_disabled ? 0 : my_ap_ip;
     }
 }
 
-static bool get_bind_addr(char *buf, size_t len)
+/* True if at least one *selected* interface currently has an IP. The task
+ * loop waits for this before starting the listener. */
+static bool mb_any_bind_ip(void)
 {
-    uint32_t ip = get_bind_target_ip();
-    if (ip == 0) return false;
-    ip4_addr_t a;
-    a.addr = ip;
-    snprintf(buf, len, IPSTR, IP2STR(&a));
-    return true;
+    if ((s_bind & RC_BIND_AP) && bind_ip_for(RC_BIND_AP) != 0) return true;
+    if ((s_bind & RC_BIND_STA) && bind_ip_for(RC_BIND_STA) != 0) return true;
+    if ((s_bind & RC_BIND_VPN) && bind_ip_for(RC_BIND_VPN) != 0) return true;
+    return false;
 }
 
-static const char *bind_name(uint8_t bind)
+/* "1.2.3.4, 5.6.7.8" for the selected interfaces that are up, "" if none.
+ * For status output. */
+static void mb_bind_ips_str(char *buf, size_t len)
 {
-    switch (bind) {
-    case RC_BIND_STA: return "STA";
-    case RC_BIND_VPN: return "VPN";
-    default:          return "AP";
+    static const uint8_t flags[3] = { RC_BIND_AP, RC_BIND_STA, RC_BIND_VPN };
+    char tmp[16];
+    size_t off = 0;
+    buf[0] = '\0';
+    for (int i = 0; i < 3 && off < len; i++) {
+        if (!(s_bind & flags[i])) continue;
+        uint32_t ip = bind_ip_for(flags[i]);
+        if (ip == 0) continue;
+        ip4_addr_t a;
+        a.addr = ip;
+        snprintf(tmp, sizeof(tmp), IPSTR, IP2STR(&a));
+        int n = snprintf(buf + off, len - off, "%s%s",
+                         (off > 0) ? ", " : "", tmp);
+        if (n > 0) off += (size_t)n;
     }
+}
+
+/* "AP" / "AP, VPN" / "AP, STA, VPN" ... for status output. */
+static void mb_bind_mask_name(uint8_t mask, char *buf, size_t len)
+{
+    static const uint8_t flags[3] = { RC_BIND_AP, RC_BIND_STA, RC_BIND_VPN };
+    static const char *names[3] = { "AP",
+#if CONFIG_ETH_UPLINK
+                                    "ETH",
+#else
+                                    "STA",
+#endif
+                                    "VPN" };
+    size_t off = 0;
+    buf[0] = '\0';
+    for (int i = 0; i < 3 && off < len; i++) {
+        if (!(mask & flags[i])) continue;
+        int n = snprintf(buf + off, len - off, "%s%s",
+                         (off > 0) ? ", " : "", names[i]);
+        if (n > 0) off += (size_t)n;
+    }
+    if (off == 0) snprintf(buf, len, "(none)");
+}
+
+/* ================================================================
+ *  Accept-time interface filter
+ * ================================================================
+ *
+ * The port's connect callback only receives (client_id, username, password)
+ * — no socket, no address — so the interface check cannot be done there.
+ * Instead the port is hooked at accept time, exactly like the remote
+ * console: the port calls context__init() once per accepted client socket
+ * (port/net__esp_tls.c) and closes the socket when it returns NULL, so we
+ * inspect getsockname() — which returns the local IP, i.e. the interface
+ * the connection arrived on — and drop connections from unselected
+ * interfaces.
+ *
+ * This is a linker-level interposer in this component (the same --wrap
+ * mechanism the port itself uses for mosquitto_unpwd_check); the port
+ * sources are not modified. Runs in the broker task. The port's
+ * mosq_sock_t is a plain int.
+ */
+static bool mb_bind_allows(uint32_t local_ip)
+{
+    if ((s_bind & RC_BIND_AP) && !ap_disabled && local_ip == my_ap_ip) {
+        return true;
+    }
+    if ((s_bind & RC_BIND_STA) && local_ip == my_ip) {
+        return true;
+    }
+    if (s_bind & RC_BIND_VPN) {
+#if CONFIG_WG_SERVER
+        if (local_ip == wgs_ip && wgs_is_running()) {
+            return true;  /* WireGuard server client on the tunnel address */
+        }
+#endif
+        if (local_ip == vpn_tunnel_ip) {
+            return true;  /* VPN uplink: connection on the tunnel IP */
+        }
+    }
+    return false;
+}
+
+struct mosquitto *__real_context__init(int sock);
+
+struct mosquitto *__wrap_context__init(int sock)
+{
+    if (sock >= 0) {
+        struct sockaddr_in local;
+        socklen_t len = sizeof(local);
+        if (getsockname(sock, (struct sockaddr *)&local, &len) != 0) {
+            /* Cannot classify the connection: fail closed. */
+            ESP_LOGW(TAG, "getsockname failed, rejecting connection");
+            return NULL;
+        }
+        if (!mb_bind_allows(local.sin_addr.s_addr)) {
+            /* net__socket_accept() closes the socket for us. */
+            return NULL;
+        }
+    }
+    return __real_context__init(sock);
 }
 
 /* ================================================================
@@ -188,42 +287,38 @@ static void mb_on_message(char *client, char *topic, char *data, int len,
 
 static void mqtt_broker_task(void *arg)
 {
-    char bind[16];
-
     while (!s_state.shutdown) {
-        /* Wait until the selected interface has a usable bind address:
-         * the broker must not listen while that interface is down. */
-        if (!s_enabled || !get_bind_addr(bind, sizeof(bind))) {
-            s_state.bound_ip = 0;
+        /* Wait until at least one selected interface has an IP: the
+         * broker must not listen while none of them is up. */
+        if (!s_enabled || !mb_any_bind_ip()) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
         struct mosq_broker_config cfg = {
-            .host = bind,
+            .host = "0.0.0.0",  /* all interfaces; the accept filter
+                                 * (mb_bind_allows) enforces the selection */
             .port = s_port,
             .tls_cfg = NULL,
             .handle_connect_cb = mb_on_connect,
             .handle_message_cb = mb_on_message,
         };
 
-        s_state.bound_ip = get_bind_target_ip();
         s_state.running = true;
         int rc = mosq_broker_run(&cfg);  /* blocks until mosq_broker_stop() */
         s_state.running = false;
-        s_state.bound_ip = 0;
 
         if (s_state.shutdown) {
             break;
         }
         if (s_state.rebind) {
-            /* Port / AP IP changed: restart immediately with new settings. */
+            /* Port changed: restart immediately with new settings. */
             s_state.rebind = false;
             continue;
         }
         /* Unexpected early exit (port collision, OOM). Note: lwIP's
          * tcp_bind() does not reject an IP no netif currently owns, so a
-         * down AP netif is not a bind failure — the loop's guard above
+         * down interface is not a bind failure — the loop's guard above
          * keeps us out of mosq_broker_run() in that case anyway. */
         ESP_LOGW(TAG, "broker stopped (rc=%d), retrying", rc);
         vTaskDelay(pdMS_TO_TICKS(5000));
@@ -302,11 +397,11 @@ void mqtt_broker_rebind(void)
     ESP_LOGI(TAG, "rebind requested");
 }
 
-/* The listener binds to a fixed IP, but the STA/VPN interface IPs change at
- * runtime (DHCP update, VPN up/down, WG server restart). The broker task is
- * blocked in mosq_broker_run() while listening, so a short timer compares the
- * running bind address with the current target and triggers a rebind when
- * they diverge (target gone included). */
+/* The listener binds to 0.0.0.0, so interface IP changes (DHCP update, VPN
+ * up/down, WG server restart) need no rebind — the accept filter reads the
+ * current IPs on every connection. The timer only handles the stop case:
+ * the broker is running but every selected interface lost its IP. (The
+ * start case is picked up by the task loop on its own.) */
 static esp_timer_handle_t s_watchdog;
 
 static void bind_watchdog_cb(void *arg)
@@ -315,8 +410,8 @@ static void bind_watchdog_cb(void *arg)
     if (s_state.task == NULL || !s_state.running) {
         return;
     }
-    if (get_bind_target_ip() != s_state.bound_ip) {
-        ESP_LOGI(TAG, "bind address changed, rebinding");
+    if (!mb_any_bind_ip()) {
+        ESP_LOGI(TAG, "no bound interface has an IP, stopping listener");
         mqtt_broker_rebind();
     }
 }
@@ -343,8 +438,9 @@ esp_err_t mqtt_broker_set_port(uint16_t port)
 
 esp_err_t mqtt_broker_set_bind(uint8_t bind)
 {
-    if (bind != RC_BIND_AP && bind != RC_BIND_STA && bind != RC_BIND_VPN) {
-        return ESP_ERR_INVALID_ARG;  /* exactly one interface */
+    if (bind == 0 ||
+        (bind & ~(RC_BIND_AP | RC_BIND_STA | RC_BIND_VPN)) != 0) {
+        return ESP_ERR_INVALID_ARG;
     }
 
     if (bind == s_bind) {
@@ -354,10 +450,12 @@ esp_err_t mqtt_broker_set_bind(uint8_t bind)
     s_bind = bind;
     set_config_param_int(NVS_KEY_MB_BIND, (int32_t)bind);
 
-    if (s_state.task != NULL && s_state.running) {
-        mqtt_broker_rebind();
-    }
-    ESP_LOGI(TAG, "bind set to %s", bind_name(bind));
+    /* No rebind needed: the accept filter reads s_bind live, and the
+     * start/stop transitions (first/last selected IP appearing) are
+     * handled by the task loop and the watchdog. */
+    char name[24];
+    mb_bind_mask_name(bind, name, sizeof(name));
+    ESP_LOGI(TAG, "bind set to %s", name);
     return ESP_OK;
 }
 
@@ -411,6 +509,7 @@ void mqtt_broker_get_info(mqtt_broker_info_t *info)
     info->running = s_state.running;
     info->port = s_port;
     info->bind = s_bind;
+    mb_bind_mask_name(s_bind, info->bind_desc, sizeof(info->bind_desc));
     info->auth_required = (s_user[0] != '\0');
     info->messages = s_state.messages;
 
@@ -419,7 +518,7 @@ void mqtt_broker_get_info(mqtt_broker_info_t *info)
     taskEXIT_CRITICAL(&s_cred_mux);
     info->user[sizeof(info->user) - 1] = '\0';
 
-    (void)get_bind_addr(info->listen_addr, sizeof(info->listen_addr));
+    mb_bind_ips_str(info->listen_addr, sizeof(info->listen_addr));
 }
 
 /* ================================================================
@@ -442,8 +541,11 @@ static void load_config(void)
     if (port != 0) {
         s_port = (uint16_t)port;
     }
-    if (bind == RC_BIND_AP || bind == RC_BIND_STA || bind == RC_BIND_VPN) {
-        s_bind = (uint8_t)bind;
+    if (bind > 0) {
+        uint8_t m = (uint8_t)(bind & (RC_BIND_AP | RC_BIND_STA | RC_BIND_VPN));
+        if (m != 0) {
+            s_bind = m;
+        }
     }
 
     size_t sz;
@@ -494,9 +596,9 @@ static int mqtt_cmd(int argc, char **argv)
                : info.running ? "listening"
                : "waiting for interface");
         if (info.enabled) {
-            printf("  Bind:      %s\n", bind_name(info.bind));
+            printf("  Bind:      %s\n", info.bind_desc);
             printf("  Listen:    %s:%u\n",
-                   info.listen_addr[0] ? info.listen_addr : "(interface has no IP)",
+                   info.listen_addr[0] ? info.listen_addr : "0.0.0.0",
                    info.port);
             printf("  Auth:      %s\n",
                    info.auth_required ? "required" : "open (no user set)");
@@ -539,28 +641,51 @@ static int mqtt_cmd(int argc, char **argv)
 
     if (strcmp(action, "bind") == 0) {
         if (mb_args.arg1->count == 0) {
-            printf("Usage: mqtt bind <ap|sta|vpn>\n");
-            return 1;
+            char cur[24];
+            mb_bind_mask_name(s_bind, cur, sizeof(cur));
+            printf("Current bind: %s\n", cur);
+#if CONFIG_ETH_UPLINK
+            printf("Usage: mqtt bind <ap,eth,vpn>  (comma-separated, or 'all')\n");
+#else
+            printf("Usage: mqtt bind <ap,sta,vpn>  (comma-separated, or 'all')\n");
+#endif
+            return 0;
         }
-        uint8_t b;
-        if (strcmp(mb_args.arg1->sval[0], "ap") == 0) {
-            b = RC_BIND_AP;
-        } else if (strcmp(mb_args.arg1->sval[0], "sta") == 0) {
-            b = RC_BIND_STA;
-        } else if (strcmp(mb_args.arg1->sval[0], "vpn") == 0) {
-            b = RC_BIND_VPN;
+        uint8_t b = 0;
+        const char *arg = mb_args.arg1->sval[0];
+        if (strcmp(arg, "all") == 0) {
+            b = RC_BIND_AP | RC_BIND_STA | RC_BIND_VPN;
         } else {
-            printf("Unknown interface: %s (use ap, sta or vpn)\n",
-                   mb_args.arg1->sval[0]);
-            return 1;
+            char arg_copy[64];
+            strncpy(arg_copy, arg, sizeof(arg_copy) - 1);
+            arg_copy[sizeof(arg_copy) - 1] = '\0';
+            char *tok = strtok(arg_copy, ",");
+            while (tok) {
+                if (strcmp(tok, "ap") == 0 || strcmp(tok, "AP") == 0) {
+                    b |= RC_BIND_AP;
+                } else if (strcmp(tok, "sta") == 0 || strcmp(tok, "STA") == 0
+#if CONFIG_ETH_UPLINK
+                           || strcmp(tok, "eth") == 0 || strcmp(tok, "ETH") == 0
+#endif
+                           ) {
+                    b |= RC_BIND_STA;
+                } else if (strcmp(tok, "vpn") == 0 || strcmp(tok, "VPN") == 0) {
+                    b |= RC_BIND_VPN;
+                } else {
+                    printf("Unknown interface: %s (use ap, sta, vpn)\n", tok);
+                    return 1;
+                }
+                tok = strtok(NULL, ",");
+            }
         }
         esp_err_t err = mqtt_broker_set_bind(b);
         if (err != ESP_OK) {
             printf("Failed to set bind: %s\n", esp_err_to_name(err));
             return 1;
         }
-        mqtt_broker_get_info(&info);
-        printf("Bind set to %s\n", bind_name(info.bind));
+        char name[24];
+        mb_bind_mask_name(b, name, sizeof(name));
+        printf("Bind set to %s\n", name);
         return 0;
     }
 
@@ -593,7 +718,7 @@ static void register_mqtt_cmd(void)
     mb_args.action = arg_str1(NULL, NULL, "<action>",
                               "status|enable|disable|port|bind|user");
     mb_args.arg1   = arg_str0(NULL, NULL, "<arg1>",
-                              "port, interface (ap/sta/vpn), username, or 'off'");
+                              "port, interface list (ap,sta,vpn or all), username, or 'off'");
     mb_args.arg2   = arg_str0(NULL, NULL, "<arg2>", "password");
     mb_args.end    = arg_end(3);
 
@@ -625,8 +750,10 @@ void mqtt_broker_init(void)
         esp_timer_start_periodic(s_watchdog, 2 * 1000000);
     }
 
+    char bind_name_buf[24];
+    mb_bind_mask_name(s_bind, bind_name_buf, sizeof(bind_name_buf));
     ESP_LOGI(TAG, "initialized (enabled=%d, port=%u, bind=%s, auth=%s)",
-             s_enabled, s_port, bind_name(s_bind),
+             s_enabled, s_port, bind_name_buf,
              s_user[0] ? "required" : "open");
 
     if (s_enabled) {

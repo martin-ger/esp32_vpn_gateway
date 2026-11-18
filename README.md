@@ -159,13 +159,13 @@ Details: [WireGuard VPN](https://github.com/martin-ger/esp32_nat_router/wiki/Wir
 
 The gateway runs its own **local MQTT broker** (an [Espressif port of Mosquitto](https://components.espressif.com/components/espressif/mosquitto)), so devices can talk MQTT without an external broker — e.g. Home Assistant, Tasmota or ESPHome devices:
 
-- **Pick the interface**: the listener binds to the IP of exactly one interface — **AP** (default: `mqtt://192.168.4.1:1883`, LAN only, not reachable from the uplink or the internet), **STA** (the uplink network) or **VPN** (the tunnel, for clients behind the WireGuard VPN). While the chosen interface has no IP, the broker waits.
+- **Pick the interfaces**: the broker serves any combination of the **AP** (default, LAN only: `mqtt://192.168.4.1:1883`, not reachable from the uplink or the internet), **STA** (the uplink network) and **VPN** (the tunnel, for clients behind the WireGuard VPN) interfaces. Connections arriving on unselected interfaces are rejected. While none of the selected interfaces has an IP, the broker waits.
 - **Optional authentication**: without a configured user the broker is open; with a user, every connection must present that user and password.
 - **No TLS** transport in this port.
 
 ```
 mqtt enable
-mqtt bind ap                 # or: sta / vpn
+mqtt bind ap,vpn             # comma-separated list of ap, sta, vpn — or: all
 mqtt user ha <password>      # or: mqtt user off  (open broker)
 mqtt port 1883
 mqtt status

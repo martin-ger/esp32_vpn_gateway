@@ -2024,20 +2024,13 @@ static esp_err_t config_get_handler(httpd_req_t *req)
                         mqtt_broker_set_port((uint16_t)port);
                     }
                 }
-                /* Bind interface (single-select; the broker listener binds
-                 * to the IP of the chosen interface) */
-                if (httpd_query_key_value(buf, "mb_bind", param1, sizeof(param1)) == ESP_OK) {
-                    preprocess_string(param1);
-                    uint8_t b;
-                    if (strcmp(param1, "sta") == 0) {
-                        b = RC_BIND_STA;
-                    } else if (strcmp(param1, "vpn") == 0) {
-                        b = RC_BIND_VPN;
-                    } else {
-                        b = RC_BIND_AP;
-                    }
-                    mqtt_broker_set_bind(b);
-                }
+                /* Bind interfaces (checkboxes: absent = unchecked) */
+                uint8_t bind = 0;
+                if (httpd_query_key_value(buf, "mb_bind_ap", param1, sizeof(param1)) == ESP_OK) bind |= RC_BIND_AP;
+                if (httpd_query_key_value(buf, "mb_bind_sta", param1, sizeof(param1)) == ESP_OK) bind |= RC_BIND_STA;
+                if (httpd_query_key_value(buf, "mb_bind_vpn", param1, sizeof(param1)) == ESP_OK) bind |= RC_BIND_VPN;
+                if (bind == 0) bind = RC_BIND_AP;
+                mqtt_broker_set_bind(bind);
                 /* Credentials: empty username opens the broker, empty
                  * password keeps the current one */
                 char mb_user[64] = "";
@@ -2314,10 +2307,8 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     mqtt_broker_get_info(&mb_info);
     const char* mb_enabled_checked = mb_info.enabled ? "checked" : "";
     const char* mb_disabled_checked = mb_info.enabled ? "" : "checked";
-    const char* mb_bind_name = mb_info.bind == RC_BIND_STA ? "STA"
-                        : mb_info.bind == RC_BIND_VPN ? "VPN" : "AP";
     const char* mb_status_color;
-    char mb_status_buf[80];
+    char mb_status_buf[128];
     const char* mb_status_text;
     if (!mb_info.enabled) {
         mb_status_color = "#888";
@@ -2325,13 +2316,14 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     } else if (mb_info.running) {
         mb_status_color = "#4caf50";
         snprintf(mb_status_buf, sizeof(mb_status_buf),
-                 "Listening on %s:%u (%s)", mb_info.listen_addr,
-                 mb_info.port, mb_bind_name);
+                 "Listening on %s:%u (%s)",
+                 mb_info.listen_addr[0] ? mb_info.listen_addr : "0.0.0.0",
+                 mb_info.port, mb_info.bind_desc);
         mb_status_text = mb_status_buf;
     } else {
         mb_status_color = "#ffc107";
         snprintf(mb_status_buf, sizeof(mb_status_buf),
-                 "Waiting for %s interface", mb_bind_name);
+                 "Waiting for %s interface(s)", mb_info.bind_desc);
         mb_status_text = mb_status_buf;
     }
     char mb_user_esc[96];
@@ -2340,9 +2332,9 @@ static esp_err_t config_get_handler(httpd_req_t *req)
         mb_enabled_checked, mb_disabled_checked,
         mb_status_color, mb_status_text,
         mb_info.port,
-        mb_info.bind == RC_BIND_AP ? "checked" : "",
-        mb_info.bind == RC_BIND_STA ? "checked" : "",
-        mb_info.bind == RC_BIND_VPN ? "checked" : "",
+        (mb_info.bind & RC_BIND_AP) ? "checked" : "",
+        (mb_info.bind & RC_BIND_STA) ? "checked" : "",
+        (mb_info.bind & RC_BIND_VPN) ? "checked" : "",
         mb_user_esc);
     SEND_CHUNK(req, section, HTTPD_RESP_USE_STRLEN);
 #endif

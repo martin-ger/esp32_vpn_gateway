@@ -173,8 +173,10 @@ setTimeout(\"location.href = '/'\", 10000);\
 </form>"
 
 /* MQTT Broker section - uses: mb_en_chk, mb_dis_chk, mb_color, mb_status,
-   mb_port, mb_bind_ap_chk, mb_bind_sta_chk, mb_bind_vpn_chk, mb_user */
-#define CONFIG_CHUNK_MB "\
+   mb_port, mb_bind_ap_chk, mb_bind_sta_chk, mb_bind_vpn_chk, mb_user.
+   The Bind cell is a separate macro: macros do not expand inside string
+   literals, and the uplink checkbox label differs on ETH builds. */
+#define CONFIG_CHUNK_MB_HEAD "\
 <h2>MQTT Broker</h2>\
 <form action='' method='GET'>\
 <input type='hidden' name='mb_save' value='1'/>\
@@ -186,16 +188,35 @@ setTimeout(\"location.href = '/'\", 10000);\
 <tr><td>Status</td><td><strong style='color: %s;'>%s</strong></td></tr>\
 <tr><td>Port</td><td><input type='number' name='mb_port' value='%d' min='1' max='65535' style='width: 100px;'/></td></tr>\
 <tr><td>Bind</td><td>\
-<label style='margin-right: 0.8rem;'><input type='radio' name='mb_bind' value='ap' %s> AP</label>\
-<label style='margin-right: 0.8rem;'><input type='radio' name='mb_bind' value='sta' %s> STA</label>\
-<label><input type='radio' name='mb_bind' value='vpn' %s> VPN</label>\
+"
+#define CONFIG_CHUNK_MB_BIND_AP \
+    "<label style='margin-right: 0.8rem;'><input type='checkbox' name='mb_bind_ap' value='1' %s> AP</label>"
+#define CONFIG_CHUNK_MB_BIND_VPN \
+    "<label><input type='checkbox' name='mb_bind_vpn' value='1' %s> VPN</label>"
+#if CONFIG_ETH_UPLINK
+/* ETH_UPLINK: uplink checkbox labeled "ETH" (maps to RC_BIND_STA) */
+#define CONFIG_CHUNK_MB_BIND_STA \
+    "<label style='margin-right: 0.8rem;'><input type='checkbox' name='mb_bind_sta' value='1' %s> ETH</label>"
+#else
+#define CONFIG_CHUNK_MB_BIND_STA \
+    "<label style='margin-right: 0.8rem;'><input type='checkbox' name='mb_bind_sta' value='1' %s> STA</label>"
+#endif
+#define CONFIG_CHUNK_MB_BIND \
+    CONFIG_CHUNK_MB_BIND_AP \
+    CONFIG_CHUNK_MB_BIND_STA \
+    CONFIG_CHUNK_MB_BIND_VPN
+#define CONFIG_CHUNK_MB_TAIL "\
 </td></tr>\
 <tr><td>Username</td><td><input type='text' name='mb_user' value='%s' placeholder='empty = open broker'/></td></tr>\
 <tr><td>Password</td><td><input type='password' name='mb_pass' placeholder='unchanged (empty = no password)'/></td></tr>\
 <tr><td></td><td><input type='submit' value='Save' class='ok-button'/></td></tr>\
 </table>\
-<small>Built-in MQTT broker for LAN clients (no TLS). The listener binds to the IP of the selected interface.</small>\
+<small>Built-in MQTT broker (no TLS). Connections are only accepted on the selected interfaces.</small>\
 </form>"
+#define CONFIG_CHUNK_MB \
+    CONFIG_CHUNK_MB_HEAD \
+    CONFIG_CHUNK_MB_BIND \
+    CONFIG_CHUNK_MB_TAIL
 
 /* PCAP section - uses: pcap_off/acl/promisc_sel, pcap_color, pcap_status, captured, dropped, snaplen, sta_ip */
 #define CONFIG_CHUNK_PCAP "\
