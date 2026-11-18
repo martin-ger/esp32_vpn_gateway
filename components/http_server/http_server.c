@@ -2044,19 +2044,34 @@ static esp_err_t config_get_handler(httpd_req_t *req)
                 if (bind == 0) bind = RC_BIND_AP;
                 mqtt_broker_set_bind(bind);
                 /* Credentials: empty username opens the broker, empty
-                 * password keeps the current one */
-                char mb_user[64] = "";
-                char mb_pass[64] = "";
-                if (httpd_query_key_value(buf, "mb_user", mb_user, sizeof(mb_user)) == ESP_OK) {
-                    preprocess_string(mb_user);
-                }
-                if (httpd_query_key_value(buf, "mb_pass", mb_pass, sizeof(mb_pass)) == ESP_OK) {
-                    preprocess_string(mb_pass);
-                }
-                if (mb_user[0] == '\0') {
-                    mqtt_broker_set_credentials("", "");
+                 * password keeps the current one. The values arrive
+                 * URL-encoded (up to 3 bytes per character). A value that
+                 * does not fit, or is too long once decoded, leaves the
+                 * credentials unchanged: storing a cut-off username or
+                 * password would lock every client out. */
+                char mb_user[3 * MQTT_BROKER_CRED_MAX] = "";
+                char mb_pass[3 * MQTT_BROKER_CRED_MAX] = "";
+                esp_err_t uerr = httpd_query_key_value(buf, "mb_user", mb_user, sizeof(mb_user));
+                esp_err_t perr = httpd_query_key_value(buf, "mb_pass", mb_pass, sizeof(mb_pass));
+                if (uerr == ESP_ERR_HTTPD_RESULT_TRUNC || perr == ESP_ERR_HTTPD_RESULT_TRUNC) {
+                    ESP_LOGW(TAG, "MQTT broker credentials too long, not changed");
                 } else {
-                    mqtt_broker_set_credentials(mb_user, mb_pass[0] ? mb_pass : NULL);
+                    if (uerr == ESP_OK) {
+                        preprocess_string(mb_user);
+                    } else {
+                        mb_user[0] = '\0';
+                    }
+                    if (perr == ESP_OK) {
+                        preprocess_string(mb_pass);
+                    } else {
+                        mb_pass[0] = '\0';
+                    }
+                    esp_err_t cerr = (mb_user[0] == '\0')
+                        ? mqtt_broker_set_credentials("", "")
+                        : mqtt_broker_set_credentials(mb_user, mb_pass[0] ? mb_pass : NULL);
+                    if (cerr != ESP_OK) {
+                        ESP_LOGW(TAG, "MQTT broker credentials too long, not changed");
+                    }
                 }
                 ESP_LOGI(TAG, "MQTT broker settings saved via web");
                 free(buf);
@@ -2332,13 +2347,19 @@ static esp_err_t config_get_handler(httpd_req_t *req)
                  mb_info.listen_addr[0] ? mb_info.listen_addr : "0.0.0.0",
                  mb_info.port, mb_info.bind_desc);
         mb_status_text = mb_status_buf;
+    } else if (mb_info.port_in_use) {
+        mb_status_color = "#ffc107";
+        snprintf(mb_status_buf, sizeof(mb_status_buf),
+                 "Waiting: port %u is in use", mb_info.port);
+        mb_status_text = mb_status_buf;
     } else {
         mb_status_color = "#ffc107";
         snprintf(mb_status_buf, sizeof(mb_status_buf),
                  "Waiting for %s interface(s)", mb_info.bind_desc);
         mb_status_text = mb_status_buf;
     }
-    char mb_user_esc[96];
+    /* html_escape() turns a character into at most 5 ("&#NN;") */
+    char mb_user_esc[5 * MQTT_BROKER_CRED_MAX];
     html_escape_to(mb_user_esc, sizeof(mb_user_esc), mb_info.user);
     snprintf(section, sizeof(section), CONFIG_CHUNK_MB,
         mb_enabled_checked, mb_disabled_checked,

@@ -58,11 +58,34 @@ menu "MQTT Broker"
         bool "Enable built-in MQTT broker"
         default y
         help
-            Runs a local MQTT broker (espressif/mosquitto port) bound to
-            the AP interface, e.g. mqtt://192.168.1.1:1883. Only LAN
-            clients can reach it; no TLS transport in this port.
-            Off at runtime until 'mqtt enable'. Adds ~60 KB flash;
-            ~2 kB heap plus ~4 kB per connected client.
+            Runs a local MQTT broker (espressif/mosquitto port), e.g.
+            mqtt://192.168.4.1:1883. The listener is on 0.0.0.0 and
+            connections are accepted only on the interfaces selected with
+            'mqtt bind' (AP by default; STA/ETH and VPN optional). No TLS
+            transport in this port. Off at runtime until 'mqtt enable'.
+            Adds ~60 KB flash; ~2 kB heap plus ~4 kB per connected client.
+
+    config MQTT_BROKER_MAX_CLIENTS
+        int "Maximum concurrent MQTT clients"
+        default 4
+        range 1 8
+        depends on MQTT_BROKER
+        help
+            Connections beyond this are closed right after accept. Every
+            client holds an lwIP socket (CONFIG_LWIP_MAX_SOCKETS is shared
+            with the web server, remote console, PCAP and syslog) and heap.
+
+    config MQTT_BROKER_MAX_PACKET
+        int "Maximum MQTT packet size (bytes)"
+        default 4096
+        range 256 65536
+        depends on MQTT_BROKER
+        help
+            Largest MQTT packet the broker accepts, including CONNECT
+            (checked before authentication). The broker allocates an
+            incoming packet at its declared size, so this bounds the heap
+            a single client can claim. Larger packets disconnect the
+            client.
 
 endmenu
 

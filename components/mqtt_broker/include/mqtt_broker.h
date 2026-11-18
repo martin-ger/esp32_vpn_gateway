@@ -1,8 +1,10 @@
 /* Built-in MQTT broker (espressif/mosquitto port).
  *
- * Runs a local MQTT broker bound to the router's AP (LAN) interface so
- * devices in the local network can publish/subscribe without an external
- * broker. Only LAN clients can reach it.
+ * Runs a local MQTT broker on the router so devices can publish/subscribe
+ * without an external broker. The listener is on 0.0.0.0; each accepted
+ * connection is checked against the selected interfaces (AP / STA / VPN,
+ * any combination) by the local address it was made to, and dropped if that
+ * interface is not selected.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -18,9 +20,14 @@ extern "C" {
 
 #ifdef CONFIG_MQTT_BROKER
 
+/* Buffer size for the broker username/password (max length + NUL). */
+#define MQTT_BROKER_CRED_MAX 64
+
 typedef struct {
     bool enabled;        /* persisted in NVS */
     bool running;        /* broker main loop currently active */
+    bool port_in_use;    /* the port is taken by another listener; the
+                          * broker waits until it becomes free */
     uint16_t port;
     uint8_t bind;        /* bitmask of interfaces served:
                            * RC_BIND_AP | RC_BIND_STA | RC_BIND_VPN
@@ -28,7 +35,7 @@ typedef struct {
     char bind_desc[24];  /* bind bitmask as text ("AP, VPN") */
     bool auth_required;  /* a broker user is configured */
     uint32_t messages;   /* total messages processed by the broker */
-    char user[32];       /* configured username ("" = open broker) */
+    char user[MQTT_BROKER_CRED_MAX]; /* configured username ("" = open) */
     char listen_addr[64];/* IPs of the selected interfaces that are up
                           * ("1.2.3.4, 5.6.7.8"), "" if none */
 } mqtt_broker_info_t;
@@ -36,18 +43,20 @@ typedef struct {
 /**
  * @brief Load NVS config, register the 'mqtt' console command, start the
  *        broker task if enabled. Call once from app_main() after console
- *        init. The broker task waits for the AP interface to have an IP
- *        before binding, so the uplink init order does not matter.
+ *        init. The broker task waits until at least one selected interface
+ *        has an IP before it starts listening, so the uplink init order
+ *        does not matter.
  */
 void mqtt_broker_init(void);
 
-/** @brief Persist enabled=1 and start the broker task (no-op if running). */
+/** @brief Persist enabled=1 and start the broker task (no-op if running).
+ *  @return ESP_ERR_TIMEOUT if a previous disable is still shutting down. */
 esp_err_t mqtt_broker_enable(void);
 
 /** @brief Persist enabled=0 and stop the broker (no-op if not running). */
 esp_err_t mqtt_broker_disable(void);
 
-/** @brief Set the listen port and rebind the running broker. */
+/** @brief Set the listen port and restart the running listener. */
 esp_err_t mqtt_broker_set_port(uint16_t port);
 
 /**
@@ -66,13 +75,14 @@ esp_err_t mqtt_broker_set_bind(uint8_t bind);
  *
  * user == "" opens the broker (no authentication).
  * pass == NULL keeps the current password (used when only the username
- * is changed).
+ * is changed). Both must be shorter than MQTT_BROKER_CRED_MAX.
  */
 esp_err_t mqtt_broker_set_credentials(const char *user, const char *pass);
 
 /**
- * @brief Stop and restart the broker loop so it picks up a new bind
- *        address (AP IP) or port. No-op while the broker is not running.
+ * @brief Stop and restart the broker loop so it picks up a new port.
+ *        Drops all connected clients. No-op while the broker is not
+ *        running.
  */
 void mqtt_broker_rebind(void);
 

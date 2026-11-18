@@ -854,11 +854,6 @@ void ap_set_enabled(bool enabled)
 #endif
     ap_disabled = !enabled;
     set_config_param_int("ap_disabled", ap_disabled ? 1 : 0);
-#if CONFIG_MQTT_BROKER
-    /* The MQTT broker binds to the AP IP: drop its listener so it
-     * re-binds (or waits) once the AP interface is back up. */
-    mqtt_broker_rebind();
-#endif
     ESP_LOGI(TAG, "AP interface %s", enabled ? "enabled" : "disabled");
 }
 

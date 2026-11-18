@@ -2,9 +2,9 @@
  *
  * Runs a local MQTT broker on the router so devices can publish/subscribe
  * without an external broker. The listener is bound to 0.0.0.0 and every
- * accepted connection is filtered at the TCP level by the interface IP it
- * arrived on (same model as the remote console): only connections coming in
- * on the selected interfaces (AP / STA / VPN, any combination) are served.
+ * accepted connection is filtered at the TCP level by the local address it
+ * was made to (same model as the remote console): only connections to the
+ * IP of a selected interface (AP / STA / VPN, any combination) are served.
  * Compile-time guarded by CONFIG_MQTT_BROKER.
  *
  * SPDX-License-Identifier: MIT
@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -49,7 +50,7 @@ static const char *TAG = "mqtt_broker";
 #define NVS_KEY_MB_PASS  "mb_pass"
 
 #define MB_DEFAULT_PORT  1883
-#define MB_CRED_MAX      64
+#define MB_CRED_MAX      MQTT_BROKER_CRED_MAX
 
 /* The mosquitto port needs at least 5 kB of stack; keep headroom for
  * nested topic-tree walks and large QoS 2 messages. */
@@ -58,6 +59,12 @@ static const char *TAG = "mqtt_broker";
 
 #define MB_STOP_TIMEOUT_MS  3000
 #define MB_STOP_POLL_MS     20
+
+/* Wait between checks while the port is taken by another listener, and the
+ * backoff after mosq_broker_run() failed to start for any other reason. */
+#define MB_PORT_WAIT_MS     5000
+#define MB_RETRY_MIN_MS     5000
+#define MB_RETRY_MAX_MS     (5 * 60 * 1000)
 
 /* ---------- Runtime state ---------- */
 static bool      s_enabled = false;
@@ -80,12 +87,14 @@ static struct {
     volatile bool running;   /* broker main loop active */
     volatile bool shutdown;  /* task should exit */
     volatile bool rebind;    /* stop + restart with current settings */
+    volatile bool port_in_use; /* waiting for the port to become free */
     uint32_t messages;       /* total messages processed */
 } s_state = {
     .task = NULL,
     .running = false,
     .shutdown = false,
     .rebind = false,
+    .port_in_use = false,
     .messages = 0,
 };
 
@@ -175,9 +184,13 @@ static void mb_bind_mask_name(uint8_t mask, char *buf, size_t len)
  * Instead the port is hooked at accept time, exactly like the remote
  * console: the port calls context__init() once per accepted client socket
  * (port/net__esp_tls.c) and closes the socket when it returns NULL, so we
- * inspect getsockname() — which returns the local IP, i.e. the interface
- * the connection arrived on — and drop connections from unselected
- * interfaces.
+ * inspect getsockname() — the local IP the client connected to — and drop
+ * connections to the IPs of unselected interfaces.
+ *
+ * Note this is the destination address, not the ingress interface: lwIP
+ * accepts a packet for any of its own IPs on any netif, so a host that can
+ * route to e.g. the AP address through the uplink passes the AP check. Same
+ * limitation as the remote console.
  *
  * This is a linker-level interposer in this component (the same --wrap
  * mechanism the port itself uses for mosquitto_unpwd_check); the port
@@ -223,6 +236,34 @@ struct mosquitto *__wrap_context__init(int sock)
         }
     }
     return __real_context__init(sock);
+}
+
+/* ================================================================
+ *  Stop requests that race the broker startup
+ * ================================================================
+ *
+ * mosq_broker_stop() only clears mosquitto's global `run` flag, and
+ * mosq_broker_run() sets `run = 1` right before entering its main loop. A
+ * stop issued while the broker is still starting up (s_state.running is
+ * already true, so disable/rebind/the watchdog do call it) would be
+ * overwritten and lost: the broker would keep serving after a disable.
+ *
+ * mosq_broker_run() calls mosquitto_main_loop() after setting `run = 1`, so
+ * re-apply a pending request there (linker --wrap). Any stop issued after
+ * this check lands on `run` after it was set and is not lost either. The
+ * real loop then runs no iteration but still does its cleanup.
+ */
+struct mosquitto__listener_sock;
+int __real_mosquitto_main_loop(struct mosquitto__listener_sock *listensock,
+                               int listensock_count);
+
+int __wrap_mosquitto_main_loop(struct mosquitto__listener_sock *listensock,
+                               int listensock_count)
+{
+    if (s_state.shutdown || s_state.rebind) {
+        mosq_broker_stop();
+    }
+    return __real_mosquitto_main_loop(listensock, listensock_count);
 }
 
 /* ================================================================
@@ -285,20 +326,71 @@ static void mb_on_message(char *client, char *topic, char *data, int len,
  *  Broker task
  * ================================================================ */
 
+/* True if a TCP listener could bind 0.0.0.0:port right now, the way the
+ * port opens its listener (IPv4, SO_REUSEADDR).
+ *
+ * mosq_broker_run() leaks its partly built state (topic tree, listener
+ * array) when it cannot open the listener, so it must not be retried in a
+ * loop against a port another service holds (web server, remote console,
+ * PCAP stream, ...). Probing first costs nothing: a socket that never
+ * listened is freed on close. */
+static bool mb_port_free(uint16_t port)
+{
+    int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s < 0) {
+        return true;  /* cannot tell (no free socket): let the broker try */
+    }
+    int one = 1;
+    (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(port),
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+    };
+    bool ok = (bind(s, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+    close(s);
+    return ok;
+}
+
+/* vTaskDelay() that returns early when the task is asked to exit, so a
+ * disable does not have to wait out a long backoff. */
+static void mb_sleep(uint32_t ms)
+{
+    while (ms > 0 && !s_state.shutdown) {
+        uint32_t step = (ms > 100) ? 100 : ms;
+        vTaskDelay(pdMS_TO_TICKS(step));
+        ms -= step;
+    }
+}
+
 static void mqtt_broker_task(void *arg)
 {
+    uint32_t retry_ms = MB_RETRY_MIN_MS;
+
     while (!s_state.shutdown) {
         /* Wait until at least one selected interface has an IP: the
          * broker must not listen while none of them is up. */
         if (!s_enabled || !mb_any_bind_ip()) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            mb_sleep(1000);
             continue;
         }
+
+        uint16_t port = s_port;
+        if (!mb_port_free(port)) {
+            if (!s_state.port_in_use) {
+                ESP_LOGW(TAG, "port %u is in use, waiting for it to become free",
+                         port);
+                s_state.port_in_use = true;
+            }
+            mb_sleep(MB_PORT_WAIT_MS);
+            continue;
+        }
+        s_state.port_in_use = false;
 
         struct mosq_broker_config cfg = {
             .host = "0.0.0.0",  /* all interfaces; the accept filter
                                  * (mb_bind_allows) enforces the selection */
-            .port = s_port,
+            .port = port,
             .tls_cfg = NULL,
             .handle_connect_cb = mb_on_connect,
             .handle_message_cb = mb_on_message,
@@ -312,18 +404,23 @@ static void mqtt_broker_task(void *arg)
             break;
         }
         if (s_state.rebind) {
-            /* Port changed: restart immediately with new settings. */
+            /* Port changed or every selected interface lost its IP:
+             * restart with the current settings. */
             s_state.rebind = false;
+            retry_ms = MB_RETRY_MIN_MS;
             continue;
         }
-        /* Unexpected early exit (port collision, OOM). Note: lwIP's
-         * tcp_bind() does not reject an IP no netif currently owns, so a
-         * down interface is not a bind failure — the loop's guard above
-         * keeps us out of mosq_broker_run() in that case anyway. */
-        ESP_LOGW(TAG, "broker stopped (rc=%d), retrying", rc);
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        /* Startup failed for another reason (out of memory or sockets,
+         * port taken between probe and bind). Each failed start leaks a
+         * little inside the port, so back off. */
+        ESP_LOGW(TAG, "broker stopped (rc=%d), retrying in %" PRIu32 " s",
+                 rc, retry_ms / 1000);
+        mb_sleep(retry_ms);
+        retry_ms = (retry_ms * 2 > MB_RETRY_MAX_MS) ? MB_RETRY_MAX_MS
+                                                    : retry_ms * 2;
     }
 
+    s_state.port_in_use = false;
     s_state.task = NULL;
     ESP_LOGI(TAG, "broker task exiting");
     vTaskDelete(NULL);
@@ -335,17 +432,24 @@ static void mqtt_broker_task(void *arg)
 
 esp_err_t mqtt_broker_enable(void)
 {
-    s_enabled = true;
-    set_config_param_int(NVS_KEY_MB_EN, 1);
-
     /* A previous disable() may still be shutting the task down; wait for it
      * to exit so we can start a fresh one. */
     for (int waited = 0; s_state.task != NULL && s_state.shutdown &&
          waited < MB_STOP_TIMEOUT_MS; waited += MB_STOP_POLL_MS) {
         vTaskDelay(pdMS_TO_TICKS(MB_STOP_POLL_MS));
     }
+    if (s_state.task != NULL && s_state.shutdown) {
+        /* The old task is about to exit: reporting success here would
+         * leave the broker off while enabled is persisted. */
+        ESP_LOGW(TAG, "previous broker task still shutting down");
+        return ESP_ERR_TIMEOUT;
+    }
+
+    s_enabled = true;
+    set_config_param_int(NVS_KEY_MB_EN, 1);
+
     if (s_state.task != NULL) {
-        return ESP_OK;  /* already running (or still shutting down) */
+        return ESP_OK;  /* already running */
     }
 
     s_state.shutdown = false;
@@ -507,6 +611,7 @@ void mqtt_broker_get_info(mqtt_broker_info_t *info)
     memset(info, 0, sizeof(*info));
     info->enabled = s_enabled;
     info->running = s_state.running;
+    info->port_in_use = s_state.port_in_use;
     info->port = s_port;
     info->bind = s_bind;
     mb_bind_mask_name(s_bind, info->bind_desc, sizeof(info->bind_desc));
@@ -594,6 +699,7 @@ static int mqtt_cmd(int argc, char **argv)
         printf("  State:     %s\n",
                !info.enabled ? "disabled"
                : info.running ? "listening"
+               : info.port_in_use ? "waiting (port in use)"
                : "waiting for interface");
         if (info.enabled) {
             printf("  Bind:      %s\n", info.bind_desc);
