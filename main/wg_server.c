@@ -63,6 +63,11 @@ static const char *TAG = "wg_server";
  * after a reboot only if it is newer than the last save. */
 #define TS_SAVE_INTERVAL_US  (10ULL * 60 * 1000000)
 
+/* How often the peers' session state is polled to log connect/offline. The
+ * component has no session event, so a "connected" line comes up to this late;
+ * the line carries the true handshake age. */
+#define CONN_POLL_INTERVAL_US  (10ULL * 1000000)
+
 /* Keepalive written into client configs: keeps the client's NAT mapping open
  * so the server can reach it between its own packets. */
 #define CLIENT_KEEPALIVE_S  25
@@ -92,6 +97,9 @@ static uint8_t (*peer_ts)[TS_LEN];  /* newest handshake timestamp per peer, same
 static int peer_count;
 static bool peers_loaded;           /* NVS peer table read; done on first use, see ensure_peers() */
 static esp_timer_handle_t ts_timer;
+static esp_timer_handle_t conn_timer;
+static uint8_t peer_up;             /* bit i: peers[i] had a session at the last poll */
+_Static_assert(WGS_MAX_PEERS <= 8, "peer_up needs one bit per peer");
 
 static bool alloc_tables(void)
 {
@@ -361,6 +369,48 @@ static void ts_timer_cb(void *arg)
     xSemaphoreGive(lock);
 }
 
+/* Periodic (esp_timer task): log when a peer's session comes up or goes away.
+ * "up" means the peer holds a usable keypair. It turns on with the first data
+ * packet of a new session, not on rekeys (the previous keypair stays valid
+ * meanwhile), and off when the last keypair expires 180 s after the newest
+ * handshake. A silent client is therefore reported offline 60..180 s after its
+ * last packet, depending on where it was in the two-minute rekey cycle. A
+ * client without persistent keepalive is reported offline whenever it idles. */
+static void conn_timer_cb(void *arg)
+{
+    (void)arg;
+    char tun[16], ep[16];
+
+    if (!esp_wireguard_server_is_running()) {
+        return;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    for (int i = 0; i < peer_count; i++) {
+        esp_wireguard_server_peer_stats_t st;
+        if (esp_wireguard_server_get_peer_stats(peers[i].pubkey, &st) != ESP_OK) {
+            continue;
+        }
+        uint8_t bit = (uint8_t)(1u << i);
+        bool was_up = (peer_up & bit) != 0;
+        if (st.up && !was_up) {
+            peer_up |= bit;
+            if (st.endpoint_ip != 0) {
+                ESP_LOGI(TAG, "VPN client '%s' (%s) connected, handshake %lus ago, endpoint %s:%u",
+                         peers[i].name, ip4str(peers[i].ip, tun), (unsigned long)st.handshake_age_s,
+                         ip4str(st.endpoint_ip, ep), st.endpoint_port);
+            } else {
+                ESP_LOGI(TAG, "VPN client '%s' (%s) connected, handshake %lus ago",
+                         peers[i].name, ip4str(peers[i].ip, tun), (unsigned long)st.handshake_age_s);
+            }
+        } else if (!st.up && was_up) {
+            peer_up &= (uint8_t)~bit;
+            ESP_LOGI(TAG, "VPN client '%s' (%s) offline (session expired)",
+                     peers[i].name, ip4str(peers[i].ip, tun));
+        }
+    }
+    xSemaphoreGive(lock);
+}
+
 /* ---- settings ---- */
 
 void wgs_load_config(void)
@@ -461,6 +511,12 @@ void wgs_start(void)
             const esp_timer_create_args_t args = { .callback = ts_timer_cb, .name = "wgs_ts" };
             if (esp_timer_create(&args, &ts_timer) == ESP_OK) {
                 esp_timer_start_periodic(ts_timer, TS_SAVE_INTERVAL_US);
+            }
+        }
+        if (conn_timer == NULL) {
+            const esp_timer_create_args_t args = { .callback = conn_timer_cb, .name = "wgs_conn" };
+            if (esp_timer_create(&args, &conn_timer) == ESP_OK) {
+                esp_timer_start_periodic(conn_timer, CONN_POLL_INTERVAL_US);
             }
         }
     }
@@ -726,6 +782,9 @@ esp_err_t wgs_peer_del(const char *name)
         }
         memmove(&peers[i], &peers[i + 1], (size_t)(peer_count - i - 1) * sizeof(wgs_peer_cfg_t));
         memmove(peer_ts[i], peer_ts[i + 1], (size_t)(peer_count - i - 1) * TS_LEN);
+        /* Shift the up bits along with the table; a deleted peer is not
+         * reported offline, its session simply ends with it. */
+        peer_up = (uint8_t)((peer_up & ((1u << i) - 1)) | ((peer_up >> (i + 1)) << i));
         peer_count--;
         mbedtls_platform_zeroize(&peers[peer_count], sizeof(wgs_peer_cfg_t));
         memset(peer_ts[peer_count], 0, TS_LEN);
