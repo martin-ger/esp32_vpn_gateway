@@ -198,6 +198,31 @@ More in [Security](https://github.com/martin-ger/esp32_nat_router/wiki/Security)
 - **Web UI**: red theme and red icon, the **🔐 VPN Server** page, a VPN server status row on the index page, and the **LAN Gateway** field on the VPN page.
 - **NVS keys**: `vpn_lan_gw` for the LAN gateway, and the `wgs_*` keys of the server. The server's peer table holds the preshared keys and is left out of plain-text config exports. See [NVS Storage](https://github.com/martin-ger/esp32_nat_router/wiki/NVS-Storage).
 
+## Built-in MQTT Broker (branch `MQTT`)
+
+The [`MQTT`](https://github.com/martin-ger/esp32_vpn_gateway/tree/MQTT) branch runs an **MQTT broker on the ESP32** itself (the `espressif/mosquitto` port), so IoT devices on the AP or behind the VPN need no broker elsewhere. It replaces the external MQTT client of this branch: the Home Assistant topics are published by the built-in broker. The branch is in testing and has no pre-built binaries yet; build it from source.
+
+- **Broker**: MQTT 3.1.1 / 5 on a configurable port (default 1883), optional username/password, no TLS. It serves any combination of the AP, the uplink (STA/ETH) and the VPN tunnel (`mqtt bind ap,sta,vpn`); connections on other interfaces are dropped. Limits on clients (default 4), packet size and queued messages keep its RAM use bounded.
+- **Home Assistant**: the broker itself publishes the telemetry, per-client state and discovery configs and acts on the command topics (restart, web UI, remote console, AP), with the same topics and entities as the [MQTT Home Assistant](https://github.com/martin-ger/esp32_nat_router/wiki/MQTT-Home-Assistant) integration. No MQTT client library is involved. Point Home Assistant's MQTT integration at the ESP32 (or bridge `esp32_nat_router/#` and `homeassistant/#` from your own broker).
+- **Configuration**: console command `mqtt` (`status`, `enable`, `disable`, `port`, `bind`, `user`, `ha on|off`, `interval`, `rediscover`) and an **MQTT Broker** section on the web configuration page. Both are off by default and use no RAM until enabled.
+- **Build options**: `CONFIG_MQTT_BROKER` (about 80 KB of flash) and `CONFIG_MQTT_HA` (about 8 KB more) in menuconfig, under *MQTT Broker*.
+
+```bash
+git checkout MQTT
+idf.py build flash
+```
+
+Then on the console:
+
+```
+mqtt enable
+mqtt bind ap,sta
+mqtt user <name> <password>
+mqtt ha on
+```
+
+Set a username and password before serving the uplink: the Home Assistant command topics can restart the router and switch its interfaces.
+
 ## Supported Hardware
 
 | Build | Chip | Uplink | WG client + LAN gateway | WG server |
