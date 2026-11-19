@@ -21,6 +21,7 @@
 #include <netinet/in.h>
 
 #include "mqtt_broker.h"
+#include "mqtt_ha.h"
 #include "mosq_broker.h"
 #include "esp_log.h"
 #include "esp_console.h"
@@ -318,6 +319,9 @@ static void mb_on_message(char *client, char *topic, char *data, int len,
 {
     (void)data;  /* payload is not NUL-terminated, never log it */
     s_state.messages++;
+#if CONFIG_MQTT_HA
+    mqtt_ha_on_message(topic, data, len);
+#endif
     ESP_LOGD(TAG, "message from %s on %s (%d B, qos %d, retain %d)",
              client ? client : "?", topic ? topic : "?", len, qos, retain);
 }
@@ -439,6 +443,9 @@ static void mqtt_broker_task(void *arg)
             .handle_message_cb = mb_on_message,
         };
 
+#if CONFIG_MQTT_HA
+        mqtt_ha_broker_started();
+#endif
         s_state.running = true;
         int rc = mosq_broker_run(&cfg);  /* blocks until mosq_broker_stop() */
         s_state.running = false;
@@ -753,6 +760,16 @@ static int mqtt_cmd(int argc, char **argv)
                    info.auth_required ? "required" : "open (no user set)");
             printf("  Messages:  %" PRIu32 "\n", info.messages);
         }
+#if CONFIG_MQTT_HA
+        if (mqtt_ha_is_enabled()) {
+            const char *id = mqtt_ha_device_id();
+            printf("  HA:        on (state every %" PRIu32 " s%s%s)\n",
+                   mqtt_ha_get_interval(),
+                   id[0] ? ", device " : "", id);
+        } else {
+            printf("  HA:        off\n");
+        }
+#endif
         return 0;
     }
 
@@ -857,17 +874,73 @@ static int mqtt_cmd(int argc, char **argv)
         return 0;
     }
 
+#if CONFIG_MQTT_HA
+    if (strcmp(action, "ha") == 0) {
+        const char *arg = (mb_args.arg1->count > 0) ? mb_args.arg1->sval[0] : "";
+        if (strcmp(arg, "on") == 0) {
+            mqtt_ha_set_enabled(true);
+        } else if (strcmp(arg, "off") == 0) {
+            mqtt_ha_set_enabled(false);
+        } else {
+            printf("Usage: mqtt ha <on|off>\n");
+            return 1;
+        }
+        printf("Home Assistant topics %s\n", mqtt_ha_is_enabled() ? "on" : "off");
+        if (mqtt_ha_is_enabled() && !s_enabled) {
+            printf("Note: the broker is disabled (mqtt enable)\n");
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "interval") == 0) {
+        if (mb_args.arg1->count == 0) {
+            printf("Usage: mqtt interval <%d-%d>\n",
+                   MQTT_HA_INTERVAL_MIN, MQTT_HA_INTERVAL_MAX);
+            return 1;
+        }
+        int val = atoi(mb_args.arg1->sval[0]);
+        if (val < 0 || !mqtt_ha_set_interval((uint32_t)val)) {
+            printf("Interval must be %d-%d seconds\n",
+                   MQTT_HA_INTERVAL_MIN, MQTT_HA_INTERVAL_MAX);
+            return 1;
+        }
+        printf("HA state interval set to %" PRIu32 " s\n", mqtt_ha_get_interval());
+        return 0;
+    }
+
+    if (strcmp(action, "rediscover") == 0) {
+        if (!mqtt_ha_is_enabled()) {
+            printf("Home Assistant topics are off (mqtt ha on)\n");
+            return 1;
+        }
+        mqtt_ha_rediscover();
+        printf("Discovery configs will be re-published\n");
+        return 0;
+    }
+#endif
+
     printf("Unknown action: %s\n", action);
+#if CONFIG_MQTT_HA
+    printf("Usage: mqtt <status|enable|disable|port|bind|user|ha|interval|rediscover>\n");
+#else
     printf("Usage: mqtt <status|enable|disable|port|bind|user>\n");
+#endif
     return 1;
 }
 
 static void register_mqtt_cmd(void)
 {
+#if CONFIG_MQTT_HA
+    mb_args.action = arg_str1(NULL, NULL, "<action>",
+                              "status|enable|disable|port|bind|user|ha|interval|rediscover");
+    mb_args.arg1   = arg_str0(NULL, NULL, "<arg1>",
+                              "port, interfaces, username, 'off', on|off, or seconds");
+#else
     mb_args.action = arg_str1(NULL, NULL, "<action>",
                               "status|enable|disable|port|bind|user");
     mb_args.arg1   = arg_str0(NULL, NULL, "<arg1>",
                               "port, interface list (ap,sta,vpn or all), username, or 'off'");
+#endif
     mb_args.arg2   = arg_str0(NULL, NULL, "<arg2>", "password");
     mb_args.end    = arg_end(3);
 
@@ -886,7 +959,14 @@ static void register_mqtt_cmd(void)
 #else
                 "  mqtt bind <ap,sta,vpn|all>  - Set served interfaces (immediate)\n"
 #endif
-                "  mqtt user <user> [pass]     - Set auth user ('off' = open broker)",
+                "  mqtt user <user> [pass]     - Set auth user ('off' = open broker)"
+#if CONFIG_MQTT_HA
+                "\n"
+                "  mqtt ha <on|off>            - Home Assistant topics on/off\n"
+                "  mqtt interval <seconds>     - HA state interval (5-3600 s)\n"
+                "  mqtt rediscover             - Re-publish HA discovery configs"
+#endif
+                ,
         .hint = " <action> [<args>]",
         .func = &mqtt_cmd,
         .argtable = &mb_args,
@@ -901,6 +981,9 @@ static void register_mqtt_cmd(void)
 void mqtt_broker_init(void)
 {
     load_config();
+#if CONFIG_MQTT_HA
+    mqtt_ha_load_config();
+#endif
     register_mqtt_cmd();
 
     /* Only meaningful while the broker runs; cheap no-op otherwise. */

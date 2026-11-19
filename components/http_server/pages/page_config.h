@@ -172,8 +172,10 @@ setTimeout(\"location.href = '/'\", 10000);\
 </table>\
 </form>"
 
-/* MQTT Broker section - uses: mb_en_chk, mb_dis_chk, mb_color, mb_status,
-   mb_port, mb_bind_ap_chk, mb_bind_sta_chk, mb_bind_vpn_chk, mb_user.
+/* MQTT Broker section, three chunks: CONFIG_CHUNK_MB_TOP - uses: mb_en_chk,
+   mb_dis_chk, mb_color, mb_status, mb_port, mb_bind_ap_chk, mb_bind_sta_chk,
+   mb_bind_vpn_chk; CONFIG_CHUNK_MB_HA (CONFIG_MQTT_HA only); and
+   CONFIG_CHUNK_MB_TAIL - uses: mb_user.
    The Bind cell is a separate macro: macros do not expand inside string
    literals, and the uplink checkbox label differs on ETH builds. */
 #define CONFIG_CHUNK_MB_HEAD "\
@@ -205,18 +207,26 @@ setTimeout(\"location.href = '/'\", 10000);\
     CONFIG_CHUNK_MB_BIND_AP \
     CONFIG_CHUNK_MB_BIND_STA \
     CONFIG_CHUNK_MB_BIND_VPN
+/* Closes the Bind row; sent with HEAD+BIND. The HA row (only with
+   CONFIG_MQTT_HA) and the tail follow as separate chunks. */
+#define CONFIG_CHUNK_MB_BIND_END "</td></tr>"
+/* Home Assistant row - uses: mb_ha_chk, mb_ha_intv */
+#define CONFIG_CHUNK_MB_HA "\
+<tr><td>Home Assistant</td><td>\
+<label style='margin-right: 0.8rem;'><input type='checkbox' name='mb_ha' value='1' %s> Discovery topics</label>\
+state every <input type='number' name='mb_ha_intv' value='%lu' min='5' max='3600' style='width: 80px;'/> s\
+</td></tr>"
 #define CONFIG_CHUNK_MB_TAIL "\
-</td></tr>\
 <tr><td>Username</td><td><input type='text' name='mb_user' value='%s' placeholder='empty = open broker'/></td></tr>\
 <tr><td>Password</td><td><input type='password' name='mb_pass' placeholder='unchanged (empty = no password)'/></td></tr>\
 <tr><td></td><td><input type='submit' value='Save' class='ok-button'/></td></tr>\
 </table>\
 <small>Built-in MQTT broker (no TLS). Connections are only accepted on the selected interfaces.</small>\
 </form>"
-#define CONFIG_CHUNK_MB \
+#define CONFIG_CHUNK_MB_TOP \
     CONFIG_CHUNK_MB_HEAD \
     CONFIG_CHUNK_MB_BIND \
-    CONFIG_CHUNK_MB_TAIL
+    CONFIG_CHUNK_MB_BIND_END
 
 /* PCAP section - uses: pcap_off/acl/promisc_sel, pcap_color, pcap_status, captured, dropped, snaplen, sta_ip */
 #define CONFIG_CHUNK_PCAP "\

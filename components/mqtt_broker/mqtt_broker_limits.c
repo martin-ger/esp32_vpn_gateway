@@ -12,7 +12,9 @@
  *
  * This file includes mosquitto's private broker headers. It is compiled
  * with the same include path and WITH_BROKER define as the port itself, so
- * the struct layouts match; keep it free of anything else.
+ * the struct layouts match; keep it free of anything else. It also hosts
+ * the one shim the Home Assistant code needs into mosquitto's internals
+ * (mb_internal_publish, see mb_internal.h).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -51,3 +53,21 @@ void __wrap_listener__set_defaults(struct mosquitto__listener *listener)
      * a connection over the limit is closed at once. */
     listener->max_connections = CONFIG_MQTT_BROKER_MAX_CLIENTS;
 }
+
+#if CONFIG_MQTT_HA
+#include "mb_internal.h"
+
+/* Broker-originated publish for the Home Assistant topics (mqtt_ha.c).
+ * db__messages_easy_queue() is what mosquitto itself uses for messages a
+ * plugin publishes (queue_plugin_msgs() in loop.c): context NULL marks the
+ * broker as origin. It walks the subscription tree, so it must run on the
+ * broker task between packets — mqtt_ha.c calls it from the
+ * plugin__handle_tick interposer. Internal API of mosquitto 2.0.x (the
+ * port is pinned in main/idf_component.yml). */
+bool mb_internal_publish(const char *topic, const void *payload, size_t len,
+                         bool retain)
+{
+    return db__messages_easy_queue(NULL, topic, 0, (uint32_t)len, payload,
+                                   retain ? 1 : 0, 0, NULL) == MOSQ_ERR_SUCCESS;
+}
+#endif

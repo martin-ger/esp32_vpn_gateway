@@ -87,6 +87,24 @@ menu "MQTT Broker"
             a single client can claim. Larger packets disconnect the
             client.
 
+    config MQTT_HA
+        bool "Home Assistant discovery topics"
+        default y
+        depends on MQTT_BROKER
+        help
+            Lets the built-in broker publish router telemetry, per-client
+            stats and Home Assistant discovery configs itself, and act on
+            the HA command topics (restart, web UI, remote console, AP).
+            No MQTT client library: messages are injected into the local
+            broker. Switched on at run time with 'mqtt ha on' or the web
+            UI (off by default). Home Assistant connects to this broker.
+
+    config MQTT_HA_DEFAULT_INTERVAL
+        int "Default Home Assistant state interval (seconds)"
+        default 30
+        range 5 3600
+        depends on MQTT_HA
+
 endmenu
 
 menu "WireGuard Server"

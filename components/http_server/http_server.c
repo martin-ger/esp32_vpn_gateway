@@ -44,6 +44,7 @@
 #include "acl.h"
 #include "remote_console.h"
 #include "mqtt_broker.h"
+#include "mqtt_ha.h"
 #include "cJSON.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
@@ -1441,9 +1442,14 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     mqtt_broker_info_t mb_status;
     mqtt_broker_get_info(&mb_status);
     if (mb_status.running) {
+#if CONFIG_MQTT_HA
+        const char *mb_ha_note = mqtt_ha_is_enabled() ? " + Home Assistant" : "";
+#else
+        const char *mb_ha_note = "";
+#endif
         snprintf(row, sizeof(row),
-                 "<tr><td>MQTT Broker:</td><td><span style='color: #4caf50;'>Running</span> (%s)</td></tr>",
-                 mb_status.bind_desc);
+                 "<tr><td>MQTT Broker:</td><td><span style='color: #4caf50;'>Running</span> (%s)%s</td></tr>",
+                 mb_status.bind_desc, mb_ha_note);
         SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
     }
 #endif
@@ -2043,6 +2049,18 @@ static esp_err_t config_get_handler(httpd_req_t *req)
                 if (httpd_query_key_value(buf, "mb_bind_vpn", param1, sizeof(param1)) == ESP_OK) bind |= RC_BIND_VPN;
                 if (bind == 0) bind = RC_BIND_AP;
                 mqtt_broker_set_bind(bind);
+#if CONFIG_MQTT_HA
+                /* Home Assistant topics (checkbox: absent = off) */
+                mqtt_ha_set_enabled(httpd_query_key_value(buf, "mb_ha", param1,
+                                                          sizeof(param1)) == ESP_OK);
+                if (httpd_query_key_value(buf, "mb_ha_intv", param1, sizeof(param1)) == ESP_OK) {
+                    preprocess_string(param1);
+                    int intv = atoi(param1);
+                    if (intv > 0) {
+                        mqtt_ha_set_interval((uint32_t)intv);  /* ignores out of range */
+                    }
+                }
+#endif
                 /* Credentials: empty username opens the broker, empty
                  * password keeps the current one. The values arrive
                  * URL-encoded (up to 3 bytes per character). A value that
@@ -2361,14 +2379,21 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     /* html_escape() turns a character into at most 5 ("&#NN;") */
     char mb_user_esc[5 * MQTT_BROKER_CRED_MAX];
     html_escape_to(mb_user_esc, sizeof(mb_user_esc), mb_info.user);
-    snprintf(section, sizeof(section), CONFIG_CHUNK_MB,
+    snprintf(section, sizeof(section), CONFIG_CHUNK_MB_TOP,
         mb_enabled_checked, mb_disabled_checked,
         mb_status_color, mb_status_text,
         mb_info.port,
         (mb_info.bind & RC_BIND_AP) ? "checked" : "",
         (mb_info.bind & RC_BIND_STA) ? "checked" : "",
-        (mb_info.bind & RC_BIND_VPN) ? "checked" : "",
-        mb_user_esc);
+        (mb_info.bind & RC_BIND_VPN) ? "checked" : "");
+    SEND_CHUNK(req, section, HTTPD_RESP_USE_STRLEN);
+#if CONFIG_MQTT_HA
+    snprintf(section, sizeof(section), CONFIG_CHUNK_MB_HA,
+        mqtt_ha_is_enabled() ? "checked" : "",
+        (unsigned long)mqtt_ha_get_interval());
+    SEND_CHUNK(req, section, HTTPD_RESP_USE_STRLEN);
+#endif
+    snprintf(section, sizeof(section), CONFIG_CHUNK_MB_TAIL, mb_user_esc);
     SEND_CHUNK(req, section, HTTPD_RESP_USE_STRLEN);
 #endif
 
